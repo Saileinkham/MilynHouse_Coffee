@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import * as XLSX from "xlsx";
 import { get, onValue, ref as dbRef, runTransaction, set } from "firebase/database";
-import { db } from "./firebase.js";
+import { authReady, db } from "./firebase.js";
 
 // ── Initial Data ──────────────────────────────────────────────────────────────
 const DEFAULT_CHANNELS = [
@@ -58,6 +58,7 @@ function useCloudData(key, defaultValue) {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const hasEverSeededRef = useRef(false);
+  const authOkRef = useRef(true);
 
   useEffect(() => {
     let done = false;
@@ -75,6 +76,21 @@ function useCloudData(key, defaultValue) {
       let cancelled = false;
 
       (async () => {
+        const authOk = await authReady;
+        authOkRef.current = authOk;
+        if (!authOk) {
+          try {
+            const raw = localStorage.getItem(key);
+            setDataRaw(raw ? JSON.parse(raw) : defaultValue);
+          } catch {
+            setDataRaw(defaultValue);
+          }
+          done = true;
+          clearTimeout(fallbackTimer);
+          setLoading(false);
+          return;
+        }
+
         let shouldSeed = true;
         try {
           const metaSnap = await get(metaRef);
@@ -153,6 +169,12 @@ function useCloudData(key, defaultValue) {
 
       try {
         if (db) {
+          const authOk = await authReady;
+          authOkRef.current = authOk;
+          if (!authOk) {
+            localStorage.setItem(key, JSON.stringify(nextValue));
+            return;
+          }
           await runTransaction(dbRef(db, key), (current) => {
             const base =
               current ??
@@ -286,27 +308,38 @@ function compressImage(file, maxW=400, maxH=400, quality=0.75) {
 function SyncBadge({syncing,compact=false}){
   const mode = db ? "firebase" : "local";
   const [online, setOnline] = useState(mode !== "firebase");
+  const [authOk, setAuthOk] = useState(mode !== "firebase");
   useEffect(() => {
     if (!db) {
       setOnline(true);
+      setAuthOk(true);
       return;
     }
+    let cancelled = false;
+    authReady.then((ok) => {
+      if (cancelled) return;
+      setAuthOk(Boolean(ok));
+    });
     const unsub = onValue(
       dbRef(db, ".info/connected"),
       (snap) => setOnline(Boolean(snap.val())),
       () => setOnline(false),
     );
-    return () => unsub();
+    return () => {
+      cancelled = true;
+      unsub();
+    };
   }, [mode]);
 
-  const color = syncing ? "#c8a96e" : mode === "firebase" ? (online ? "#6dbe8d" : "#e0a45b") : "#a09080";
+  const color =
+    syncing ? "#c8a96e" : mode === "firebase" ? (authOk && online ? "#6dbe8d" : "#e0a45b") : "#a09080";
 
   return <div style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color}}>
     <div style={{width:7,height:7,borderRadius:"50%",background:color,animation:syncing?"pulse 1s infinite":"none",flexShrink:0}}/>
     {!compact && (
       <span>
         {mode === "firebase"
-          ? (syncing ? "กำลังซิงค์..." : (online ? "Firebase • Online" : "Firebase • Offline"))
+          ? (syncing ? "กำลังซิงค์..." : (authOk && online ? "Firebase • Online" : "Firebase • Offline"))
           : "Local • ไม่ซิงค์ข้ามเครื่อง"}
       </span>
     )}
