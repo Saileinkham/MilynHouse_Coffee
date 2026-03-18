@@ -485,6 +485,7 @@ export default function App(){
   const syncing=syncingCh||syncingPr||syncingSl||syncingEx||syncingCa;
   const winW=useWindowSize();
   const mob=winW<640;
+  const containerMax = winW < 1100 ? 1040 : winW < 1400 ? 1200 : winW < 1750 ? 1440 : 1600;
 
   const [pForm,setPForm]=useState({name:"",emoji:"🧋",category:"ชานม",prices:{},image:null});
   const [cForm,setCForm]=useState({name:"",icon:"🏪",color:"#6b4c2a",logo:null});
@@ -851,7 +852,7 @@ export default function App(){
 
       {/* ── Header ── */}
       <header style={{background:"linear-gradient(135deg,#2e1e0e,#6b4c2a)",padding:"0 16px",boxShadow:"0 4px 24px rgba(30,10,0,.35)",position:"sticky",top:0,zIndex:50}}>
-        <div style={{maxWidth:1040,margin:"0 auto",display:"flex",alignItems:"center",justifyContent:"space-between",height:mob?52:60}}>
+        <div style={{maxWidth:containerMax,margin:"0 auto",display:"flex",alignItems:"center",justifyContent:"space-between",height:mob?52:60}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <span style={{fontSize:mob?20:24}}>🧋</span>
             <div>
@@ -884,7 +885,7 @@ export default function App(){
         ))}
       </nav>}
 
-      <main style={{maxWidth:1040,margin:"0 auto",padding:mob?"16px 14px 80px":"24px 20px"}}>
+      <main style={{maxWidth:containerMax,margin:"0 auto",padding:mob?"16px 14px 80px":"24px 28px"}}>
 
         {/* ══════════════════════════════════════════════════════
             📅 MONTHLY DASHBOARD
