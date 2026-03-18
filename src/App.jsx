@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import * as XLSX from "xlsx";
-import { onValue, ref as dbRef, runTransaction, set } from "firebase/database";
+import { get, onValue, ref as dbRef, runTransaction, set } from "firebase/database";
 import { db } from "./firebase.js";
 
 // ── Initial Data ──────────────────────────────────────────────────────────────
@@ -57,6 +57,7 @@ function useCloudData(key, defaultValue) {
   const [data, setDataRaw] = useState(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const hasEverSeededRef = useRef(false);
 
   useEffect(() => {
     let done = false;
@@ -67,32 +68,59 @@ function useCloudData(key, defaultValue) {
     }, 4000);
 
     if (db) {
-      const r = dbRef(db, key);
-      const unsub = onValue(
-        r,
-        (snap) => {
-          done = true;
-          clearTimeout(fallbackTimer);
-          const val = snap.val();
-          if (val == null) {
-            setDataRaw(defaultValue);
-            runTransaction(r, (current) => current ?? defaultValue).catch(() => {});
-          } else {
-            setDataRaw(val);
-          }
-          setLoading(false);
-        },
-        () => {
-          done = true;
-          clearTimeout(fallbackTimer);
-          setDataRaw(defaultValue);
-          setLoading(false);
-        },
-      );
+      const dataRef = dbRef(db, key);
+      const metaRef = dbRef(db, `milyn_meta/seeded/${key}`);
+      const emptyValue = Array.isArray(defaultValue) ? [] : defaultValue;
+      let unsub = null;
+      let cancelled = false;
+
+      (async () => {
+        let shouldSeed = true;
+        try {
+          const metaSnap = await get(metaRef);
+          hasEverSeededRef.current = metaSnap.exists();
+          shouldSeed = !metaSnap.exists();
+        } catch {}
+
+        if (cancelled) return;
+
+        unsub = onValue(
+          dataRef,
+          (snap) => {
+            done = true;
+            clearTimeout(fallbackTimer);
+            const val = snap.val();
+
+            if (val == null) {
+              if (shouldSeed) {
+                setDataRaw(defaultValue);
+                runTransaction(dataRef, (current) => current ?? defaultValue)
+                  .then(() => set(metaRef, true))
+                  .then(() => { hasEverSeededRef.current = true; })
+                  .catch(() => {});
+              } else {
+                setDataRaw(emptyValue);
+              }
+            } else {
+              setDataRaw(val);
+            }
+
+            setLoading(false);
+          },
+          () => {
+            done = true;
+            clearTimeout(fallbackTimer);
+            setDataRaw(shouldSeed ? defaultValue : emptyValue);
+            setLoading(false);
+          },
+        );
+      })();
+
       return () => {
+        cancelled = true;
         done = true;
         clearTimeout(fallbackTimer);
-        unsub();
+        if (unsub) unsub();
       };
     }
 
@@ -126,7 +154,9 @@ function useCloudData(key, defaultValue) {
       try {
         if (db) {
           await runTransaction(dbRef(db, key), (current) => {
-            const base = current ?? defaultValue;
+            const base =
+              current ??
+              (hasEverSeededRef.current && Array.isArray(defaultValue) ? [] : defaultValue);
             return typeof updater === "function" ? updater(base) : updater;
           });
         } else {
