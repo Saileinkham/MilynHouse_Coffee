@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import * as XLSX from "xlsx";
 import { get, onValue, ref as dbRef, runTransaction, set } from "firebase/database";
-import { authReady, db } from "./firebase.js";
+import { auth, authReady, db } from "./firebase.js";
 
 // ── Initial Data ──────────────────────────────────────────────────────────────
 const DEFAULT_CHANNELS = [
@@ -53,7 +53,7 @@ const pri = { background:"linear-gradient(135deg,#8b6f47,#5a3820)", color:"#f5e6
 const sec = { background:"#fff", color:"#6b4c2a", border:"1px solid #d5c5b0", borderRadius:9, padding:"10px 0", fontSize:13, cursor:"pointer", fontFamily:"inherit", width:"100%" };
 
 // ── Cloud Storage Hook (Claude Artifact) ──────────────────────────────────────
-function useCloudData(key, defaultValue) {
+function useCloudData(key, defaultValue, cloudEnabled) {
   const [data, setDataRaw] = useState(() => {
     try {
       const raw = localStorage.getItem(key);
@@ -65,7 +65,6 @@ function useCloudData(key, defaultValue) {
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const hasEverSeededRef = useRef(false);
-  const authOkRef = useRef(true);
 
   useEffect(() => {
     let done = false;
@@ -75,7 +74,7 @@ function useCloudData(key, defaultValue) {
       setLoading(false);
     }, 4000);
 
-    if (db) {
+    if (db && cloudEnabled) {
       const dataRef = dbRef(db, key);
       const metaRef = dbRef(db, `milyn_meta/seeded/${key}`);
       const emptyValue = Array.isArray(defaultValue) ? [] : defaultValue;
@@ -83,15 +82,6 @@ function useCloudData(key, defaultValue) {
       let cancelled = false;
 
       (async () => {
-        const authOk = await authReady;
-        authOkRef.current = authOk;
-        if (!authOk) {
-          done = true;
-          clearTimeout(fallbackTimer);
-          setLoading(false);
-          return;
-        }
-
         try {
           const pendingRaw = localStorage.getItem(pendingKey);
           if (pendingRaw) {
@@ -166,7 +156,7 @@ function useCloudData(key, defaultValue) {
       done = true;
       clearTimeout(fallbackTimer);
     };
-  }, [key, defaultValue]);
+  }, [key, defaultValue, cloudEnabled]);
 
   const setData = useCallback(
     async (updater) => {
@@ -181,25 +171,20 @@ function useCloudData(key, defaultValue) {
 
       try {
         try { localStorage.setItem(key, JSON.stringify(nextValue)); } catch {}
-        if (db) {
-          const authOk = await authReady;
-          authOkRef.current = authOk;
-          if (!authOk) {
-            try { localStorage.setItem(`milyn_pending/${key}`, JSON.stringify(nextValue)); } catch {}
-            return;
-          }
+        if (db && cloudEnabled) {
           await runTransaction(dbRef(db, key), (current) => {
             const base =
               current ??
               (hasEverSeededRef.current && Array.isArray(defaultValue) ? [] : defaultValue);
             return typeof updater === "function" ? updater(base) : updater;
           });
-        } else {
+        } else if (db && !cloudEnabled) {
+          try { localStorage.setItem(`milyn_pending/${key}`, JSON.stringify(nextValue)); } catch {}
         }
       } catch {}
       finally { setSyncing(false); }
     },
-    [key, defaultValue],
+    [key, defaultValue, cloudEnabled],
   );
 
   return [data, setData, loading, syncing];
@@ -317,7 +302,7 @@ function compressImage(file, maxW=400, maxH=400, quality=0.75) {
 }
 
 // ── Components ────────────────────────────────────────────────────────────────
-function SyncBadge({syncing,compact=false}){
+function SyncBadge({syncing,compact=false,locked=false}){
   const mode = db ? "firebase" : "local";
   const [online, setOnline] = useState(mode !== "firebase");
   const [authOk, setAuthOk] = useState(mode !== "firebase");
@@ -344,14 +329,20 @@ function SyncBadge({syncing,compact=false}){
   }, [mode]);
 
   const color =
-    syncing ? "#c8a96e" : mode === "firebase" ? (authOk && online ? "#6dbe8d" : "#e0a45b") : "#a09080";
+    syncing
+      ? "#c8a96e"
+      : mode === "firebase"
+        ? (authOk && online && !locked ? "#6dbe8d" : "#e0a45b")
+        : "#a09080";
 
   return <div style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color}}>
     <div style={{width:7,height:7,borderRadius:"50%",background:color,animation:syncing?"pulse 1s infinite":"none",flexShrink:0}}/>
     {!compact && (
       <span>
         {mode === "firebase"
-          ? (syncing ? "กำลังซิงค์..." : (authOk && online ? "Firebase • Online" : "Firebase • Offline"))
+          ? (syncing
+              ? "กำลังซิงค์..."
+              : (authOk && online && !locked ? "Firebase • Online" : (locked ? "Firebase • Locked" : "Firebase • Offline")))
           : "Local • ไม่ซิงค์ข้ามเครื่อง"}
       </span>
     )}
@@ -407,10 +398,56 @@ export default function App(){
   const [modal,setModal]=useState(null);
   const [editing,setEditing]=useState(null);
 
-  const [channels,setChannels,loadingCh,syncingCh]=useCloudData("milyn_channels",DEFAULT_CHANNELS);
-  const [products,setProducts,loadingPr,syncingPr]=useCloudData("milyn_products",DEFAULT_PRODUCTS);
-  const [sales,setSales,loadingSl,syncingSl]=useCloudData("milyn_sales",DEFAULT_SALES);
-  const [expenses,setExpenses,loadingEx,syncingEx]=useCloudData("milyn_expenses",DEFAULT_EXPENSES);
+  const [cloudAllowed, setCloudAllowed] = useState(false);
+  const [codeOpen, setCodeOpen] = useState(false);
+  const [shopCode, setShopCode] = useState("");
+  const [codeErr, setCodeErr] = useState("");
+  const [codeBusy, setCodeBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!db) return () => {};
+
+    (async () => {
+      const ok = await authReady;
+      if (cancelled) return;
+      if (!ok) {
+        setCloudAllowed(false);
+        return;
+      }
+      const uid = auth?.currentUser?.uid;
+      if (!uid) {
+        setCloudAllowed(false);
+        return;
+      }
+      try {
+        const snap = await get(dbRef(db, `milyn_admins/${uid}`));
+        if (cancelled) return;
+        if (snap.exists() && typeof snap.val() === "string" && snap.val().trim()) {
+          setCloudAllowed(true);
+          setCodeOpen(false);
+        } else {
+          setCloudAllowed(false);
+          setCodeOpen(true);
+        }
+      } catch {
+        if (cancelled) return;
+        setCloudAllowed(false);
+        setCodeOpen(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const cloudEnabled = Boolean(db) && cloudAllowed;
+
+  const [channels,setChannels,loadingCh,syncingCh]=useCloudData("milyn_channels",DEFAULT_CHANNELS,cloudEnabled);
+  const [products,setProducts,loadingPr,syncingPr]=useCloudData("milyn_products",DEFAULT_PRODUCTS,cloudEnabled);
+  const [sales,setSales,loadingSl,syncingSl]=useCloudData("milyn_sales",DEFAULT_SALES,cloudEnabled);
+  const [expenses,setExpenses,loadingEx,syncingEx]=useCloudData("milyn_expenses",DEFAULT_EXPENSES,cloudEnabled);
 
   const loading=loadingCh||loadingPr||loadingSl||loadingEx;
   const syncing=syncingCh||syncingPr||syncingSl||syncingEx;
@@ -428,6 +465,31 @@ export default function App(){
   const [selYear,setSelYear]=useState(now.getFullYear());
   const [selMonth,setSelMonth]=useState(now.getMonth()); // 0-11 or "all"
   const [selChannel,setSelChannel]=useState("all"); // channel filter
+
+  async function submitShopCode() {
+    if (!db) return;
+    const c = shopCode.trim();
+    if (!c) {
+      setCodeErr("กรอกรหัสร้าน");
+      return;
+    }
+    setCodeBusy(true);
+    setCodeErr("");
+    try {
+      const ok = await authReady;
+      if (!ok) throw new Error("auth");
+      const uid = auth?.currentUser?.uid;
+      if (!uid) throw new Error("uid");
+      await set(dbRef(db, `milyn_admins/${uid}`), c);
+      setCloudAllowed(true);
+      setCodeOpen(false);
+    } catch {
+      setCloudAllowed(false);
+      setCodeErr("รหัสไม่ถูกต้อง หรือยังไม่ได้ตั้งค่า Rules/InviteCode");
+    } finally {
+      setCodeBusy(false);
+    }
+  }
 
   const close=()=>{setModal(null);setEditing(null);};
   if(loading) return <LoadingScreen/>;
@@ -695,6 +757,22 @@ export default function App(){
       <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&family=Playfair+Display:wght@700&display=swap" rel="stylesheet"/>
       <style>{`@keyframes bounce{from{transform:translateY(0)}to{transform:translateY(-10px)}}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}* {-webkit-tap-highlight-color:transparent}`}</style>
 
+      {codeOpen && (
+        <Modal title="ใส่รหัสร้าน" onClose={()=>setCodeOpen(false)} width={420}>
+          <div style={{display:"grid",gap:12}}>
+            <div>
+              <label style={lbl}>รหัสร้าน</label>
+              <input type="password" value={shopCode} onChange={e=>setShopCode(e.target.value)} style={inp} placeholder="กรอกรหัสร้านเพื่อใช้งาน Firebase"/>
+            </div>
+            {codeErr && <div style={{fontSize:12,color:"#c0392b"}}>{codeErr}</div>}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <button onClick={()=>setCodeOpen(false)} style={sec}>ใช้แบบ Local</button>
+              <button onClick={submitShopCode} disabled={codeBusy} style={{...pri,opacity:codeBusy?.7:1}}>ยืนยัน</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
       {/* ── Header ── */}
       <header style={{background:"linear-gradient(135deg,#2e1e0e,#6b4c2a)",padding:"0 16px",boxShadow:"0 4px 24px rgba(30,10,0,.35)",position:"sticky",top:0,zIndex:50}}>
         <div style={{maxWidth:1040,margin:"0 auto",display:"flex",alignItems:"center",justifyContent:"space-between",height:mob?52:60}}>
@@ -706,7 +784,7 @@ export default function App(){
             </div>
           </div>
           {mob
-            ? <SyncBadge syncing={syncing} compact/>
+            ? <SyncBadge syncing={syncing} compact locked={Boolean(db) && !cloudAllowed}/>
             : <nav style={{display:"flex",gap:2,alignItems:"center"}}>
                 {TABS.map(([k,ic,lb])=>(
                   <button key={k} onClick={()=>setTab(k)} style={{background:tab===k?"rgba(200,169,110,.22)":"transparent",border:tab===k?"1px solid rgba(200,169,110,.45)":"1px solid transparent",color:tab===k?"#f5e6d0":"#c0aa88",padding:"5px 11px",borderRadius:8,cursor:"pointer",fontSize:11,display:"flex",alignItems:"center",gap:4}}>
@@ -714,7 +792,7 @@ export default function App(){
                   </button>
                 ))}
                 <div style={{width:1,height:24,background:"rgba(255,255,255,.15)",margin:"0 6px"}}/>
-                <SyncBadge syncing={syncing}/>
+                <SyncBadge syncing={syncing} locked={Boolean(db) && !cloudAllowed}/>
               </nav>
           }
         </div>
