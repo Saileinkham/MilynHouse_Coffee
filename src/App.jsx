@@ -489,7 +489,7 @@ export default function App(){
 
   const [pForm,setPForm]=useState({name:"",emoji:"🧋",category:"ชานม",prices:{},image:null});
   const [cForm,setCForm]=useState({name:"",icon:"🏪",color:"#6b4c2a",logo:null});
-  const [sForm,setSForm]=useState({productId:"",channelId:"",qty:1,date:new Date().toISOString().split("T")[0]});
+  const [sForm,setSForm]=useState({productId:"",channelId:"",qty:1,unitPrice:"",date:new Date().toISOString().split("T")[0]});
   const [eForm,setEForm]=useState({category:"วัตถุดิบ",description:"",amount:"",date:new Date().toISOString().split("T")[0]});
   const [editExp,setEditExp]=useState(null); // expense being edited
 
@@ -708,7 +708,8 @@ export default function App(){
     const sorted=[...sl].sort((a,b)=>a.date.localeCompare(b.date));
     const rows=sorted.map((s,i)=>{
       const p=pr.find(x=>x.id===s.productId),c=ch.find(x=>x.id===s.channelId);
-      return [i+1,s.date,p?.name||"-",c?.name||"-",s.qty,s.qty?Math.round(s.amount/s.qty):0,s.amount,""];
+      const u=Number.isFinite(s.unitPrice)?s.unitPrice:(s.qty?Math.round(s.amount/s.qty):0);
+      return [i+1,s.date,p?.name||"-",c?.name||"-",s.qty,u,s.amount,""];
     });
     rows.push(["","","","","","รวม",totalIncome,""]);
     const ws=makeSheet(
@@ -778,7 +779,7 @@ export default function App(){
 
     // Sheet 2: ขายเครื่องดื่ม
     const sortedSl=[...sl].sort((a,b)=>a.date.localeCompare(b.date));
-    const sRows=sortedSl.map((s,i)=>{const p=pr.find(x=>x.id===s.productId),c=ch.find(x=>x.id===s.channelId);return [i+1,s.date,p?.name||"-",c?.name||"-",s.qty,s.qty?Math.round(s.amount/s.qty):0,s.amount,""];});
+    const sRows=sortedSl.map((s,i)=>{const p=pr.find(x=>x.id===s.productId),c=ch.find(x=>x.id===s.channelId);const u=Number.isFinite(s.unitPrice)?s.unitPrice:(s.qty?Math.round(s.amount/s.qty):0);return [i+1,s.date,p?.name||"-",c?.name||"-",s.qty,u,s.amount,""];});
     sRows.push(["","","","","","รวม",totalIncome,""]);
     const ws2=makeSheet(`บันทึกขายเครื่องดื่ม ปี ${yr} — Milyn House`,"บันทึกทุกรายการขาย แยกช่องทาง",
       ["ลำดับ","วันที่","รายการเครื่องดื่ม","ช่องทางขาย","จำนวน (แก้ว)","ราคา/แก้ว (บาท)","รวม (บาท)","หมายเหตุ"],
@@ -820,11 +821,33 @@ export default function App(){
   function openEditChan(c){setCForm({name:c.name,icon:c.icon,color:c.color,logo:c.logo||null});setEditing(c);setModal("chan");}
   function saveChan(){if(!cForm.name)return;if(editing){setChannels(prev=>prev.map(c=>c.id===editing.id?{...c,...cForm}:c));}else{const nid="ch_"+Date.now();setChannels(prev=>[...prev,{id:nid,...cForm}]);setProducts(prev=>prev.map(p=>({...p,prices:{...p.prices,[nid]:0}})));}close();}
   function delChan(id){if(window.confirm("ลบช่องทางนี้?"))setChannels(prev=>prev.filter(c=>c.id!==id));}
-  function openSale(p){setSForm({productId:p.id,channelId:ch[0]?.id||"",qty:1,date:new Date().toISOString().split("T")[0]});setModal("sale");}
+  function openSale(p){
+    const channelId = ch[0]?.id || "";
+    const unitPrice = p?.prices?.[channelId] || 0;
+    setSForm({productId:p.id,channelId,qty:1,unitPrice:String(unitPrice),date:new Date().toISOString().split("T")[0]});
+    setModal("sale");
+  }
   const saleProd=pr.find(p=>p.id===sForm.productId);
-  const saleUnit=saleProd?(saleProd.prices[sForm.channelId]||0):0;
-  const saleTotal=saleUnit*(parseInt(sForm.qty)||0);
-  function saveSale(){if(!sForm.productId||!sForm.channelId||!sForm.qty)return;setSales(prev=>[...prev,{id:Date.now(),...sForm,qty:parseInt(sForm.qty),amount:saleTotal}]);close();}
+  const saleDefaultUnit=saleProd?(saleProd.prices[sForm.channelId]||0):0;
+  const saleUnit=Number.isFinite(parseFloat(sForm.unitPrice)) ? (parseFloat(sForm.unitPrice)||0) : saleDefaultUnit;
+  const saleQty=parseInt(sForm.qty)||0;
+  const saleTotal=saleUnit*saleQty;
+
+  useEffect(() => {
+    if (!sForm.productId || !sForm.channelId) return;
+    const p = pr.find(x => x.id === sForm.productId);
+    const u = p?.prices?.[sForm.channelId] ?? 0;
+    setSForm(prev => ({...prev, unitPrice: String(u)}));
+  }, [sForm.productId, sForm.channelId]);
+
+  function saveSale(){
+    if(!sForm.productId||!sForm.channelId||!sForm.qty)return;
+    const qty=parseInt(sForm.qty)||0;
+    const unit=Number.isFinite(parseFloat(sForm.unitPrice)) ? (parseFloat(sForm.unitPrice)||0) : 0;
+    const amount=unit*qty;
+    setSales(prev=>[...prev,{id:Date.now(),...sForm,qty,unitPrice:unit,amount}]);
+    close();
+  }
   function saveExp(){if(!eForm.description||!eForm.amount)return;setExpenses(prev=>[...prev,{id:Date.now(),...eForm,amount:parseFloat(eForm.amount)}]);setEForm({category:"วัตถุดิบ",description:"",amount:"",date:new Date().toISOString().split("T")[0]});close();}
 
   const TABS=[["monthly","📅","สรุปรายเดือน"],["dashboard","📊","ภาพรวม"],["sales","🛒","ยอดขาย"],["expenses","💸","รายจ่าย"],["products","🧃","สินค้า"],["channels","📡","ช่องทางขาย"],["categories","🏷️","หมวดหมู่"]];
@@ -1082,14 +1105,14 @@ export default function App(){
               <h2 style={{fontFamily:"'Playfair Display',serif",fontSize:21,margin:0}}>ยอดขาย</h2>
               <div style={{display:"flex",gap:10}}>
                 <ExportMenu options={[{icon:"🛒",label:"ยอดขายทั้งหมด",desc:`${sl.length} รายการ`,action:exportSalesXLSX}]}/>
-                <button onClick={()=>{setSForm({productId:pr[0]?.id||"",channelId:ch[0]?.id||"",qty:1,date:new Date().toISOString().split("T")[0]});setModal("sale");}} style={{...pri,width:"auto",padding:mob?"8px 12px":"9px 18px",fontSize:mob?12:13}}>➕{mob?" ขาย":" บันทึกการขาย"}</button>
+                <button onClick={()=>{const pid=pr[0]?.id||"";const cid=ch[0]?.id||"";const p=pr.find(x=>x.id===pid);const u=p?.prices?.[cid]??0;setSForm({productId:pid,channelId:cid,qty:1,unitPrice:String(u),date:new Date().toISOString().split("T")[0]});setModal("sale");}} style={{...pri,width:"auto",padding:mob?"8px 12px":"9px 18px",fontSize:mob?12:13}}>➕{mob?" ขาย":" บันทึกการขาย"}</button>
               </div>
             </div>
             <div style={{background:"#fff",borderRadius:14,border:"1px solid #ede0cc",overflow:"hidden"}}>
               <div style={{display:"grid",gridTemplateColumns:mob?"1fr 70px 90px 36px":"1fr 1fr 70px 80px 90px 36px",padding:mob?"9px 14px":"10px 18px",background:"#f5ede0",fontSize:11,fontWeight:700,color:"#8b7060",letterSpacing:.5,textTransform:"uppercase"}}>
                 <span>สินค้า</span>{!mob&&<span>ช่องทาง</span>}<span style={{textAlign:"center"}}>แก้ว</span>{!mob&&<span style={{textAlign:"right"}}>ต่อแก้ว</span>}<span style={{textAlign:"right"}}>รวม</span><span/>
               </div>
-              {[...sl].reverse().map(s2=>{const p=pr.find(x=>x.id===s2.productId),c=ch.find(x=>x.id===s2.channelId);return <div key={s2.id} style={{display:"grid",gridTemplateColumns:mob?"1fr 70px 90px 36px":"1fr 1fr 70px 80px 90px 36px",padding:mob?"11px 14px":"12px 18px",borderTop:"1px solid #f5ede0",alignItems:"center"}}><span style={{display:"flex",alignItems:"center",gap:7}}><span style={{fontSize:18}}>{p?.emoji||"🧋"}</span><div><div style={{fontSize:13,fontWeight:600}}>{p?.name||"(ลบแล้ว)"}</div>{mob&&<div style={{fontSize:11,color:c?.color||"#555",display:"flex",alignItems:"center",gap:6}}><ChannelGlyph c={c} size={14}/> {c?.name}</div>}</div></span>{!mob&&<span style={{display:"flex",alignItems:"center",gap:6}}><ChannelGlyph c={c} size={16}/><span style={{fontSize:12,color:c?.color||"#555"}}>{c?.name||"(ลบแล้ว)"}</span></span>}<span style={{textAlign:"center",fontSize:14,fontWeight:700}}>{s2.qty}</span>{!mob&&<span style={{textAlign:"right",fontSize:12,color:"#7a6a5a"}}>฿{s2.qty?Math.round(s2.amount/s2.qty):0}</span>}<span style={{textAlign:"right",fontSize:14,fontWeight:700,color:"#2d7a4f"}}>฿{s2.amount.toLocaleString()}</span><button onClick={()=>setSales(prev=>prev.filter(x=>x.id!==s2.id))} style={{background:"none",border:"none",cursor:"pointer",color:"#d0b8a0",fontSize:15,textAlign:"center"}}>✕</button></div>;})}
+              {[...sl].reverse().map(s2=>{const p=pr.find(x=>x.id===s2.productId),c=ch.find(x=>x.id===s2.channelId);const u=Number.isFinite(s2.unitPrice)?s2.unitPrice:(s2.qty?Math.round(s2.amount/s2.qty):0);return <div key={s2.id} style={{display:"grid",gridTemplateColumns:mob?"1fr 70px 90px 36px":"1fr 1fr 70px 80px 90px 36px",padding:mob?"11px 14px":"12px 18px",borderTop:"1px solid #f5ede0",alignItems:"center"}}><span style={{display:"flex",alignItems:"center",gap:7}}><span style={{fontSize:18}}>{p?.emoji||"🧋"}</span><div><div style={{fontSize:13,fontWeight:600}}>{p?.name||"(ลบแล้ว)"}</div>{mob&&<div style={{fontSize:11,color:c?.color||"#555",display:"flex",alignItems:"center",gap:6}}><ChannelGlyph c={c} size={14}/> {c?.name}</div>}</div></span>{!mob&&<span style={{display:"flex",alignItems:"center",gap:6}}><ChannelGlyph c={c} size={16}/><span style={{fontSize:12,color:c?.color||"#555"}}>{c?.name||"(ลบแล้ว)"}</span></span>}<span style={{textAlign:"center",fontSize:14,fontWeight:700}}>{s2.qty}</span>{!mob&&<span style={{textAlign:"right",fontSize:12,color:"#7a6a5a"}}>฿{u}</span>}<span style={{textAlign:"right",fontSize:14,fontWeight:700,color:"#2d7a4f"}}>฿{s2.amount.toLocaleString()}</span><button onClick={()=>setSales(prev=>prev.filter(x=>x.id!==s2.id))} style={{background:"none",border:"none",cursor:"pointer",color:"#d0b8a0",fontSize:15,textAlign:"center"}}>✕</button></div>;})}
               {sl.length===0&&<div style={{padding:32,textAlign:"center",color:"#b0a090"}}>ยังไม่มีรายการขาย</div>}
               {sl.length>0&&<div style={{display:"flex",justifyContent:"flex-end",padding:"10px 18px",borderTop:"2px solid #f0e0c8",background:"#fffbf5"}}><span style={{fontSize:14,fontWeight:700,color:"#2d7a4f"}}>รวม ฿{totalIncome.toLocaleString()}</span></div>}
             </div>
@@ -1283,9 +1306,10 @@ export default function App(){
           {saleProd.image
             ? <div style={{width:44,height:44,borderRadius:10,overflow:"hidden",flexShrink:0}}><img src={saleProd.image} alt={saleProd.name} style={{width:"100%",height:"100%",objectFit:"cover"}}/></div>
             : <span style={{fontSize:28}}>{saleProd.emoji}</span>
-          }<div><div style={{fontSize:13,fontWeight:700}}>{saleProd.name}</div><div style={{fontSize:12,color:"#8b7060"}}>ราคา <ChannelGlyph c={ch.find(c=>c.id===sForm.channelId)} size={14}/> {ch.find(c=>c.id===sForm.channelId)?.name}: <b style={{color:ch.find(c=>c.id===sForm.channelId)?.color,fontSize:14}}>฿{saleUnit}</b></div></div></div>}
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:18}}>
+          }<div><div style={{fontSize:13,fontWeight:700}}>{saleProd.name}</div><div style={{fontSize:12,color:"#8b7060"}}>ราคามาตรฐาน <ChannelGlyph c={ch.find(c=>c.id===sForm.channelId)} size={14}/> {ch.find(c=>c.id===sForm.channelId)?.name}: <b style={{color:ch.find(c=>c.id===sForm.channelId)?.color,fontSize:14}}>฿{saleDefaultUnit}</b></div></div></div>}
+        <div style={{display:"grid",gridTemplateColumns:mob?"1fr 1fr":"1fr 1fr 1fr",gap:12,marginBottom:18}}>
           <div><label style={lbl}>จำนวน (แก้ว)</label><input type="number" min="1" value={sForm.qty} onChange={e=>setSForm({...sForm,qty:e.target.value})} style={{...inp,fontSize:20,fontWeight:700,textAlign:"center"}}/></div>
+          <div><label style={lbl}>ราคา/แก้ว (฿)</label><input type="number" value={sForm.unitPrice} onChange={e=>setSForm({...sForm,unitPrice:e.target.value})} placeholder={String(saleDefaultUnit||0)} style={{...inp,fontSize:18,fontWeight:700,textAlign:"center"}}/></div>
           <div><label style={lbl}>วันที่</label><input type="date" value={sForm.date} onChange={e=>setSForm({...sForm,date:e.target.value})} style={inp}/></div>
         </div>
         <div style={{background:"linear-gradient(135deg,#e8f7ef,#d0edd9)",borderRadius:10,padding:"12px 16px",marginBottom:18,display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:13,color:"#5a8a70"}}>ยอดรวม</span><span style={{fontSize:22,fontWeight:700,color:"#2d7a4f"}}>฿{saleTotal.toLocaleString()}</span></div>
