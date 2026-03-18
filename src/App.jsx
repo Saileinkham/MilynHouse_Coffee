@@ -41,8 +41,15 @@ const DEFAULT_EXPENSES = [
 ];
 
 const EXP_CATS = ["วัตถุดิบ","ค่าแรง","ค่าน้ำไฟ","ค่าเช่า","อุปกรณ์","อื่นๆ"];
-const CAT_OPT  = ["ชานม","ลาเต้","สมูทตี้","ผลไม้","ช็อกโกแลต","โซดา","อื่นๆ"];
-const CAT_COL  = { ชานม:"#c8a96e", ลาเต้:"#8b6f47", สมูทตี้:"#e07c7c", ผลไม้:"#6dbe8d", ช็อกโกแลต:"#7a5c3e", โซดา:"#5ba6c9" };
+const DEFAULT_CATEGORIES = [
+  { id:"milk-tea", name:"ชานม", color:"#c8a96e" },
+  { id:"latte", name:"ลาเต้", color:"#8b6f47" },
+  { id:"smoothie", name:"สมูทตี้", color:"#e07c7c" },
+  { id:"fruit", name:"ผลไม้", color:"#6dbe8d" },
+  { id:"chocolate", name:"ช็อกโกแลต", color:"#7a5c3e" },
+  { id:"soda", name:"โซดา", color:"#5ba6c9" },
+  { id:"other", name:"อื่นๆ", color:"#8b6f47" },
+];
 const EMOJIS   = ["🧋","🍵","🍓","☕","🥥","🍫","🍊","🍋","🥤","🍹","🧃","🍺","🧊","🫖","🍑","🫐","🍇","🥭","🍒","🍌"];
 const MONTH_TH = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
 
@@ -403,6 +410,9 @@ export default function App(){
   const [shopCode, setShopCode] = useState("");
   const [codeErr, setCodeErr] = useState("");
   const [codeBusy, setCodeBusy] = useState(false);
+  const [catOpen, setCatOpen] = useState(false);
+  const [catEditing, setCatEditing] = useState(null);
+  const [catForm, setCatForm] = useState({ name:"", color:"#c8a96e" });
 
   useEffect(() => {
     let cancelled = false;
@@ -448,9 +458,10 @@ export default function App(){
   const [products,setProducts,loadingPr,syncingPr]=useCloudData("milyn_products",DEFAULT_PRODUCTS,cloudEnabled);
   const [sales,setSales,loadingSl,syncingSl]=useCloudData("milyn_sales",DEFAULT_SALES,cloudEnabled);
   const [expenses,setExpenses,loadingEx,syncingEx]=useCloudData("milyn_expenses",DEFAULT_EXPENSES,cloudEnabled);
+  const [categories,setCategories,loadingCa,syncingCa]=useCloudData("milyn_categories",DEFAULT_CATEGORIES,cloudEnabled);
 
-  const loading=loadingCh||loadingPr||loadingSl||loadingEx;
-  const syncing=syncingCh||syncingPr||syncingSl||syncingEx;
+  const loading=loadingCh||loadingPr||loadingSl||loadingEx||loadingCa;
+  const syncing=syncingCh||syncingPr||syncingSl||syncingEx||syncingCa;
   const winW=useWindowSize();
   const mob=winW<640;
 
@@ -494,7 +505,51 @@ export default function App(){
   const close=()=>{setModal(null);setEditing(null);};
   if(loading) return <LoadingScreen/>;
 
-  const ch=channels||[], pr=products||[], sl=sales||[], ex=expenses||[];
+  const ch=channels||[], pr=products||[], sl=sales||[], ex=expenses||[], cats=categories||[];
+  const catColor = Object.fromEntries(cats.map(c=>[c.name,c.color]));
+  const fallbackCat = cats.find(c=>c.name==="อื่นๆ")?.name || cats[0]?.name || "อื่นๆ";
+
+  useEffect(() => {
+    if (!cats.length) return;
+    setPForm((prev) => {
+      if (cats.some((c) => c.name === prev.category)) return prev;
+      return { ...prev, category: fallbackCat };
+    });
+  }, [cats.length]);
+
+  function openAddCat(){
+    setCatEditing(null);
+    setCatForm({ name:"", color:"#c8a96e" });
+    setCatOpen(true);
+  }
+  function openEditCat(c){
+    setCatEditing(c);
+    setCatForm({ name:c.name, color:c.color });
+    setCatOpen(true);
+  }
+  function saveCat(){
+    const name = catForm.name.trim();
+    if(!name) return;
+    if (cats.some(c=>c.name===name && c.id!==catEditing?.id)) return;
+    const next = { id: catEditing?.id || `cat_${Date.now()}`, name, color: catForm.color || "#c8a96e" };
+    if (catEditing) {
+      setCategories(prev => prev.map(c=>c.id===catEditing.id?next:c));
+      if (catEditing.name !== name) setProducts(prev => prev.map(p=>p.category===catEditing.name?{...p,category:name}:p));
+    } else {
+      setCategories(prev => [...prev, next]);
+    }
+    setCatOpen(false);
+    setCatEditing(null);
+  }
+  function delCat(id){
+    const target = cats.find(c=>c.id===id);
+    if(!target) return;
+    if(target.name==="อื่นๆ") return;
+    if(!window.confirm("ลบหมวดหมู่นี้? สินค้าที่อยู่หมวดนี้จะย้ายไป 'อื่นๆ'")) return;
+    const toCat = cats.find(c=>c.name==="อื่นๆ")?.name || cats.find(c=>c.id!==id)?.name || "อื่นๆ";
+    setCategories(prev=>prev.filter(c=>c.id!==id));
+    setProducts(prev=>prev.map(p=>p.category===target.name?{...p,category:toCat}:p));
+  }
 
   // ── Monthly Derived ────────────────────────────────────────────────────────
   const isAllMonths = selMonth === "all";
@@ -735,7 +790,7 @@ export default function App(){
   };
 
   // ── CRUD ──────────────────────────────────────────────────────────────────
-  function openAddProd(){const p={};ch.forEach(c=>p[c.id]="");setPForm({name:"",emoji:"🧋",category:"ชานม",prices:p,image:null});setEditing(null);setModal("prod");}
+  function openAddProd(){const p={};ch.forEach(c=>p[c.id]="");setPForm({name:"",emoji:"🧋",category:fallbackCat,prices:p,image:null});setEditing(null);setModal("prod");}
   function openEditProd(p){const pr2={};ch.forEach(c=>pr2[c.id]=p.prices[c.id]??"");setPForm({name:p.name,emoji:p.emoji,category:p.category,prices:pr2,image:p.image||null});setEditing(p);setModal("prod");}
   function saveProd(){if(!pForm.name)return;const prices={};ch.forEach(c=>{prices[c.id]=parseFloat(pForm.prices[c.id])||0;});const pData={...pForm,prices};if(editing)setProducts(prev=>prev.map(p=>p.id===editing.id?{...p,...pData}:p));else setProducts(prev=>[...prev,{id:Date.now(),...pData}]);close();}
   function delProd(id){if(window.confirm("ลบสินค้านี้?"))setProducts(prev=>prev.filter(p=>p.id!==id));}
@@ -750,7 +805,7 @@ export default function App(){
   function saveSale(){if(!sForm.productId||!sForm.channelId||!sForm.qty)return;setSales(prev=>[...prev,{id:Date.now(),...sForm,qty:parseInt(sForm.qty),amount:saleTotal}]);close();}
   function saveExp(){if(!eForm.description||!eForm.amount)return;setExpenses(prev=>[...prev,{id:Date.now(),...eForm,amount:parseFloat(eForm.amount)}]);setEForm({category:"วัตถุดิบ",description:"",amount:"",date:new Date().toISOString().split("T")[0]});close();}
 
-  const TABS=[["monthly","📅","สรุปรายเดือน"],["dashboard","📊","ภาพรวม"],["sales","🛒","ยอดขาย"],["expenses","💸","รายจ่าย"],["products","🧃","สินค้า"],["channels","📡","ช่องทางขาย"]];
+  const TABS=[["monthly","📅","สรุปรายเดือน"],["dashboard","📊","ภาพรวม"],["sales","🛒","ยอดขาย"],["expenses","💸","รายจ่าย"],["products","🧃","สินค้า"],["channels","📡","ช่องทางขาย"],["categories","🏷️","หมวดหมู่"]];
 
   return (
     <div style={{fontFamily:"'Sarabun','Noto Sans Thai',sans-serif",background:"#faf6f0",minHeight:"100vh",color:"#3a2e1e"}}>
@@ -944,8 +999,8 @@ export default function App(){
                             <img src={p.image} alt={p.name} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
                           </div>
                         : <span style={{fontSize:mob?16:20}}>{p.emoji}</span>
-                      }<div><div style={{fontSize:13,fontWeight:600}}>{p.name}</div>{mob&&<div style={{fontSize:10,color:CAT_COL[p.category]||"#8b6f47"}}>{p.category}</div>}</div></span>
-                  {!mob&&<span style={{display:"inline-flex"}}><span style={{background:(CAT_COL[p.category]||"#c8a96e")+"22",color:CAT_COL[p.category]||"#8b6f47",borderRadius:20,padding:"2px 8px",fontSize:10,fontWeight:700}}>{p.category}</span></span>}
+                      }<div><div style={{fontSize:13,fontWeight:600}}>{p.name}</div>{mob&&<div style={{fontSize:10,color:catColor[p.category]||"#8b6f47"}}>{p.category}</div>}</div></span>
+                  {!mob&&<span style={{display:"inline-flex"}}><span style={{background:(catColor[p.category]||"#c8a96e")+"22",color:catColor[p.category]||"#8b6f47",borderRadius:20,padding:"2px 8px",fontSize:10,fontWeight:700}}>{p.category}</span></span>}
                   <span style={{textAlign:"center",fontSize:14,fontWeight:700,color:stat.cups>0?"#3a2e1e":"#c0b8b0"}}>{stat.cups}</span>
                   <span style={{textAlign:"right",fontSize:13,fontWeight:700,color:stat.amount>0?"#2d7a4f":"#c0b8b0"}}>฿{stat.amount.toLocaleString()}</span>
                   {!mob&&<span style={{textAlign:"right"}}>
@@ -1058,7 +1113,7 @@ export default function App(){
                       </div>
                     : <div style={{fontSize:36,lineHeight:1}}>{p.emoji||"🧋"}</div>
                   }
-                </div><div style={{fontSize:14,fontWeight:700,marginBottom:4}}>{p.name}</div><div style={{display:"inline-block",background:(CAT_COL[p.category]||"#c8a96e")+"22",color:CAT_COL[p.category]||"#8b6f47",borderRadius:20,padding:"2px 8px",fontSize:10,marginBottom:10,border:`1px solid ${CAT_COL[p.category]||"#c8a96e"}44`}}>{p.category}</div><div style={{marginBottom:10}}>{ch.map(c=><div key={c.id} style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#7a6a5a",marginBottom:2}}><span style={{display:"flex",alignItems:"center",gap:4}}>{c.icon} {c.name}</span><span style={{fontWeight:600,color:c.color}}>฿{p.prices[c.id]||0}</span></div>)}</div><div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#7a6a5a",paddingTop:9,borderTop:"1px solid #f0e8db",marginBottom:12}}><span>ขาย <b style={{color:"#3a2e1e"}}>{sold}</b> แก้ว</span><span>฿<b style={{color:"#2d7a4f"}}>{rev.toLocaleString()}</b></span></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}><button onClick={()=>openSale(p)} style={{...pri,fontSize:11,padding:"7px 0"}}>🛒 ขาย</button><button onClick={()=>openEditProd(p)} style={{...sec,fontSize:11,padding:"7px 0"}}>✏️ แก้ไข</button><button onClick={()=>delProd(p.id)} style={{background:"#fdecea",color:"#c0392b",border:"1px solid #f0a8a3",borderRadius:9,padding:"7px 0",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑️ ลบ</button></div></div>;})}
+                </div><div style={{fontSize:14,fontWeight:700,marginBottom:4}}>{p.name}</div><div style={{display:"inline-block",background:(catColor[p.category]||"#c8a96e")+"22",color:catColor[p.category]||"#8b6f47",borderRadius:20,padding:"2px 8px",fontSize:10,marginBottom:10,border:`1px solid ${(catColor[p.category]||"#c8a96e")}44`}}>{p.category}</div><div style={{marginBottom:10}}>{ch.map(c=><div key={c.id} style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#7a6a5a",marginBottom:2}}><span style={{display:"flex",alignItems:"center",gap:4}}>{c.icon} {c.name}</span><span style={{fontWeight:600,color:c.color}}>฿{p.prices[c.id]||0}</span></div>)}</div><div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#7a6a5a",paddingTop:9,borderTop:"1px solid #f0e8db",marginBottom:12}}><span>ขาย <b style={{color:"#3a2e1e"}}>{sold}</b> แก้ว</span><span>฿<b style={{color:"#2d7a4f"}}>{rev.toLocaleString()}</b></span></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}><button onClick={()=>openSale(p)} style={{...pri,fontSize:11,padding:"7px 0"}}>🛒 ขาย</button><button onClick={()=>openEditProd(p)} style={{...sec,fontSize:11,padding:"7px 0"}}>✏️ แก้ไข</button><button onClick={()=>delProd(p.id)} style={{background:"#fdecea",color:"#c0392b",border:"1px solid #f0a8a3",borderRadius:9,padding:"7px 0",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑️ ลบ</button></div></div>;})}
             </div>
           </div>
         )}
@@ -1075,9 +1130,44 @@ export default function App(){
             </div>
           </div>
         )}
+
+        {/* ══ CATEGORIES ══ */}
+        {tab==="categories"&&(
+          <div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+              <h2 style={{fontFamily:"'Playfair Display',serif",fontSize:21,margin:0}}>หมวดหมู่</h2>
+              <button onClick={openAddCat} style={{...pri,width:"auto",padding:mob?"8px 12px":"9px 18px",fontSize:mob?12:13}}>➕{mob?" เพิ่ม":" เพิ่มหมวดหมู่"}</button>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:mob?"1fr":"repeat(auto-fill,minmax(220px,1fr))",gap:16}}>
+              {cats.map(c=>{
+                const cnt = pr.filter(p=>p.category===c.name).length;
+                return <div key={c.id} style={{background:"#fff",borderRadius:16,padding:18,border:`2px solid ${c.color}33`}}>
+                  <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14}}>
+                    <div style={{width:44,height:44,borderRadius:12,background:c.color+"22",border:`1px solid ${c.color}55`}}/>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:15,fontWeight:700,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.name}</div>
+                      <div style={{fontSize:11,color:"#a09080"}}>{cnt} สินค้า</div>
+                    </div>
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                    <button onClick={()=>openEditCat(c)} style={{...sec,fontSize:12,padding:"7px 0"}}>✏️ แก้ไข</button>
+                    <button onClick={()=>delCat(c.id)} disabled={c.name==="อื่นๆ"} style={{background:c.name==="อื่นๆ"?"#f5f0e8":"#fdecea",color:c.name==="อื่นๆ"?"#a09080":"#c0392b",border:`1px solid ${c.name==="อื่นๆ"?"#e8d8c0":"#f0a8a3"}`,borderRadius:9,padding:"7px 0",fontSize:12,cursor:c.name==="อื่นๆ"?"not-allowed":"pointer",fontFamily:"inherit"}}>🗑️ ลบ</button>
+                  </div>
+                </div>;
+              })}
+            </div>
+          </div>
+        )}
       </main>
 
       {/* ── MODALS ── */}
+      {catOpen&&<Modal title={catEditing?"แก้ไขหมวดหมู่":"เพิ่มหมวดหมู่"} onClose={()=>{setCatOpen(false);setCatEditing(null);}} width={360}>
+        <div style={{marginBottom:14}}><label style={lbl}>ชื่อหมวด</label><input value={catForm.name} onChange={e=>setCatForm({...catForm,name:e.target.value})} placeholder="เช่น กาแฟ" style={inp}/></div>
+        <div style={{marginBottom:18}}><label style={lbl}>สีหมวด</label><div style={{display:"flex",gap:8,alignItems:"center"}}><input type="color" value={catForm.color} onChange={e=>setCatForm({...catForm,color:e.target.value})} style={{width:40,height:36,borderRadius:8,border:"1px solid #d5c5b0",cursor:"pointer",padding:2}}/><input value={catForm.color} onChange={e=>setCatForm({...catForm,color:e.target.value})} style={{...inp,flex:1}}/></div></div>
+        <div style={{background:catForm.color+"22",borderRadius:10,padding:12,marginBottom:20,border:`1px solid ${catForm.color}44`,display:"flex",alignItems:"center",gap:10}}><div style={{width:28,height:28,borderRadius:8,background:catForm.color,border:`1px solid ${catForm.color}`}}/><span style={{fontWeight:700,color:"#3a2e1e"}}>{catForm.name||"ชื่อหมวด"}</span></div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><button onClick={()=>{setCatOpen(false);setCatEditing(null);}} style={sec}>ยกเลิก</button><button onClick={saveCat} style={pri}>💾 บันทึก</button></div>
+      </Modal>}
+
       {modal==="prod"&&<Modal title={editing?"แก้ไขเครื่องดื่ม":"เพิ่มเครื่องดื่ม"} onClose={close} width={440}>
 
         {/* Image upload */}
@@ -1088,7 +1178,7 @@ export default function App(){
             <div style={{width:80,height:80,borderRadius:14,border:"2px dashed #d5c5b0",overflow:"hidden",flexShrink:0,background:"#fef9f0",display:"flex",alignItems:"center",justifyContent:"center",position:"relative"}}>
               {pForm.image
                 ? <img src={pForm.image} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-                : <div style={{background:(CAT_COL[pForm.category]||"#c8a96e")+"33",width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:32}}>{pForm.emoji||"🧋"}</div>
+                : <div style={{background:(catColor[pForm.category]||"#c8a96e")+"33",width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:32}}>{pForm.emoji||"🧋"}</div>
               }
             </div>
             <div style={{flex:1}}>
@@ -1118,7 +1208,9 @@ export default function App(){
           </div>
           <div>
             <label style={lbl}>หมวดหมู่</label>
-            <select value={pForm.category} onChange={e=>setPForm({...pForm,category:e.target.value})} style={inp}>{CAT_OPT.map(c=><option key={c}>{c}</option>)}</select>
+            <select value={pForm.category} onChange={e=>setPForm({...pForm,category:e.target.value})} style={inp}>
+              {[...new Set([pForm.category,...cats.map(c=>c.name)])].map(c=><option key={c} value={c}>{c}</option>)}
+            </select>
           </div>
         </div>
         <div style={{background:"#fef9f0",borderRadius:12,padding:14,border:"1px solid #e8d8c0",marginBottom:20}}>
