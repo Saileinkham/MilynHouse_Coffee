@@ -93,7 +93,7 @@ function useCloudData(key, defaultValue, cloudEnabled) {
           const pendingRaw = localStorage.getItem(pendingKey);
           if (pendingRaw) {
             const pendingVal = JSON.parse(pendingRaw);
-            await runTransaction(dataRef, () => pendingVal);
+            await set(dataRef, pendingVal);
             localStorage.removeItem(pendingKey);
             localStorage.setItem(key, JSON.stringify(pendingVal));
             setDataRaw(pendingVal);
@@ -116,12 +116,6 @@ function useCloudData(key, defaultValue, cloudEnabled) {
           (snap) => {
             done = true;
             clearTimeout(fallbackTimer);
-            try {
-              if (localStorage.getItem(pendingKey)) {
-                setLoading(false);
-                return;
-              }
-            } catch {}
             const val = snap.val();
 
             if (val == null) {
@@ -146,12 +140,6 @@ function useCloudData(key, defaultValue, cloudEnabled) {
           () => {
             done = true;
             clearTimeout(fallbackTimer);
-            try {
-              if (localStorage.getItem(pendingKey)) {
-                setLoading(false);
-                return;
-              }
-            } catch {}
             setDataRaw(shouldSeed ? defaultValue : emptyValue);
             try { localStorage.setItem(key, JSON.stringify(shouldSeed ? defaultValue : emptyValue)); } catch {}
             setLoading(false);
@@ -192,12 +180,8 @@ function useCloudData(key, defaultValue, cloudEnabled) {
         try { localStorage.setItem(key, JSON.stringify(nextValue)); } catch {}
         if (db && cloudEnabled) {
           try {
-            await runTransaction(dbRef(db, key), (current) => {
-              const base =
-                current ??
-                (hasEverSeededRef.current && Array.isArray(defaultValue) ? [] : defaultValue);
-              return typeof updater === "function" ? updater(base) : updater;
-            });
+            await set(dbRef(db, key), nextValue);
+            try { localStorage.removeItem(`milyn_pending/${key}`); } catch {}
           } catch {
             try { localStorage.setItem(`milyn_pending/${key}`, JSON.stringify(nextValue)); } catch {}
           }
