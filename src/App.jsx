@@ -5,10 +5,10 @@ import { auth, authReady, db } from "./firebase.js";
 
 // ── Initial Data ──────────────────────────────────────────────────────────────
 const DEFAULT_CHANNELS = [
-  { id:"walkin",  name:"หน้าร้าน",    icon:"🏪", color:"#6b4c2a" },
-  { id:"grab",    name:"Grab",        icon:"🟢", color:"#00b14f" },
-  { id:"lineman", name:"Line Man",    icon:"💚", color:"#06c755" },
-  { id:"shopee",  name:"Shopee Food", icon:"🟠", color:"#ee4d2d" },
+  { id:"walkin",  name:"หน้าร้าน",    icon:"🏪", color:"#6b4c2a", logo:null },
+  { id:"grab",    name:"Grab",        icon:"🟢", color:"#00b14f", logo:null },
+  { id:"lineman", name:"Line Man",    icon:"💚", color:"#06c755", logo:null },
+  { id:"shopee",  name:"Shopee Food", icon:"🟠", color:"#ee4d2d", logo:null },
 ];
 const DEFAULT_PRODUCTS = [
   { id:1, name:"ชานมไข่มุก",          emoji:"🧋", category:"ชานม",      prices:{walkin:65,grab:75,lineman:75,shopee:72} },
@@ -356,6 +356,11 @@ function SyncBadge({syncing,compact=false,locked=false}){
   </div>;
 }
 
+function ChannelGlyph({c,size=18}){
+  if (c?.logo) return <img src={c.logo} alt="" style={{width:size,height:size,objectFit:"contain",borderRadius:6}}/>;
+  return <span style={{fontSize:size,lineHeight:1}}>{c?.icon||"?"}</span>;
+}
+
 function ExportMenu({options}){
   const [open,setOpen]=useState(false);
   return <div style={{position:"relative"}}>
@@ -466,7 +471,7 @@ export default function App(){
   const mob=winW<640;
 
   const [pForm,setPForm]=useState({name:"",emoji:"🧋",category:"ชานม",prices:{},image:null});
-  const [cForm,setCForm]=useState({name:"",icon:"🏪",color:"#6b4c2a"});
+  const [cForm,setCForm]=useState({name:"",icon:"🏪",color:"#6b4c2a",logo:null});
   const [sForm,setSForm]=useState({productId:"",channelId:"",qty:1,date:new Date().toISOString().split("T")[0]});
   const [eForm,setEForm]=useState({category:"วัตถุดิบ",description:"",amount:"",date:new Date().toISOString().split("T")[0]});
   const [editExp,setEditExp]=useState(null); // expense being edited
@@ -794,8 +799,8 @@ export default function App(){
   function openEditProd(p){const pr2={};ch.forEach(c=>pr2[c.id]=p.prices[c.id]??"");setPForm({name:p.name,emoji:p.emoji,category:p.category,prices:pr2,image:p.image||null});setEditing(p);setModal("prod");}
   function saveProd(){if(!pForm.name)return;const prices={};ch.forEach(c=>{prices[c.id]=parseFloat(pForm.prices[c.id])||0;});const pData={...pForm,prices};if(editing)setProducts(prev=>prev.map(p=>p.id===editing.id?{...p,...pData}:p));else setProducts(prev=>[...prev,{id:Date.now(),...pData}]);close();}
   function delProd(id){if(window.confirm("ลบสินค้านี้?"))setProducts(prev=>prev.filter(p=>p.id!==id));}
-  function openAddChan(){setCForm({name:"",icon:"🏪",color:"#6b4c2a"});setEditing(null);setModal("chan");}
-  function openEditChan(c){setCForm({name:c.name,icon:c.icon,color:c.color});setEditing(c);setModal("chan");}
+  function openAddChan(){setCForm({name:"",icon:"🏪",color:"#6b4c2a",logo:null});setEditing(null);setModal("chan");}
+  function openEditChan(c){setCForm({name:c.name,icon:c.icon,color:c.color,logo:c.logo||null});setEditing(c);setModal("chan");}
   function saveChan(){if(!cForm.name)return;if(editing){setChannels(prev=>prev.map(c=>c.id===editing.id?{...c,...cForm}:c));}else{const nid="ch_"+Date.now();setChannels(prev=>[...prev,{id:nid,...cForm}]);setProducts(prev=>prev.map(p=>({...p,prices:{...p.prices,[nid]:0}})));}close();}
   function delChan(id){if(window.confirm("ลบช่องทางนี้?"))setChannels(prev=>prev.filter(c=>c.id!==id));}
   function openSale(p){setSForm({productId:p.id,channelId:ch[0]?.id||"",qty:1,date:new Date().toISOString().split("T")[0]});setModal("sale");}
@@ -903,7 +908,7 @@ export default function App(){
                 </button>
                 {ch.map(c=>(
                   <button key={c.id} onClick={()=>setSelChannel(c.id)} style={{padding:"7px 16px",borderRadius:20,border:selChannel===c.id?`2px solid ${c.color}`:"1px solid #d5c5b0",background:selChannel===c.id?c.color+"18":"#fff",color:selChannel===c.id?c.color:"#3a2e1e",fontSize:13,cursor:"pointer",fontFamily:"inherit",fontWeight:selChannel===c.id?700:400,display:"flex",alignItems:"center",gap:6}}>
-                    <span style={{fontSize:16}}>{c.icon}</span>{c.name}
+                    <ChannelGlyph c={c} size={16}/>{c.name}
                   </button>
                 ))}
               </div>
@@ -966,7 +971,7 @@ export default function App(){
                   const stat=chanStats[c.id]||{cups:0,amount:0};
                   return <div key={c.id} style={{marginBottom:14}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:13,marginBottom:4}}>
-                      <span style={{display:"flex",alignItems:"center",gap:6,fontWeight:600}}>{c.icon} {c.name}</span>
+                      <span style={{display:"flex",alignItems:"center",gap:6,fontWeight:600}}><ChannelGlyph c={c} size={16}/> {c.name}</span>
                       <span style={{display:"flex",gap:10,alignItems:"center"}}>
                         <span style={{fontSize:12,color:"#6b8abf"}}>{stat.cups} แก้ว</span>
                         <span style={{fontWeight:700,color:c.color}}>฿{stat.amount.toLocaleString()}</span>
@@ -1047,7 +1052,7 @@ export default function App(){
               </div>
               <div style={{background:"#fff",borderRadius:14,padding:20,border:"1px solid #ede0cc"}}>
                 <h3 style={{fontSize:14,fontWeight:700,marginBottom:15}}>📡 รายรับตามช่องทาง</h3>
-                {ch.map(c=>{const rev=chanRevMap[c.id]||0;return <div key={c.id} style={{marginBottom:13}}><div style={{display:"flex",justifyContent:"space-between",fontSize:13,marginBottom:3}}><span style={{display:"flex",alignItems:"center",gap:6}}>{c.icon} {c.name}</span><span style={{fontWeight:700,color:c.color}}>฿{rev.toLocaleString()}</span></div><div style={{height:6,background:"#f0e8db",borderRadius:4,overflow:"hidden"}}><div style={{height:"100%",width:`${(rev/chanMax)*100}%`,background:c.color,borderRadius:4,opacity:.8}}/></div></div>;})}
+                {ch.map(c=>{const rev=chanRevMap[c.id]||0;return <div key={c.id} style={{marginBottom:13}}><div style={{display:"flex",justifyContent:"space-between",fontSize:13,marginBottom:3}}><span style={{display:"flex",alignItems:"center",gap:6}}><ChannelGlyph c={c} size={16}/> {c.name}</span><span style={{fontWeight:700,color:c.color}}>฿{rev.toLocaleString()}</span></div><div style={{height:6,background:"#f0e8db",borderRadius:4,overflow:"hidden"}}><div style={{height:"100%",width:`${(rev/chanMax)*100}%`,background:c.color,borderRadius:4,opacity:.8}}/></div></div>;})}
               </div>
             </div>
           </div>
@@ -1067,7 +1072,7 @@ export default function App(){
               <div style={{display:"grid",gridTemplateColumns:mob?"1fr 70px 90px 36px":"1fr 1fr 70px 80px 90px 36px",padding:mob?"9px 14px":"10px 18px",background:"#f5ede0",fontSize:11,fontWeight:700,color:"#8b7060",letterSpacing:.5,textTransform:"uppercase"}}>
                 <span>สินค้า</span>{!mob&&<span>ช่องทาง</span>}<span style={{textAlign:"center"}}>แก้ว</span>{!mob&&<span style={{textAlign:"right"}}>ต่อแก้ว</span>}<span style={{textAlign:"right"}}>รวม</span><span/>
               </div>
-              {[...sl].reverse().map(s2=>{const p=pr.find(x=>x.id===s2.productId),c=ch.find(x=>x.id===s2.channelId);return <div key={s2.id} style={{display:"grid",gridTemplateColumns:mob?"1fr 70px 90px 36px":"1fr 1fr 70px 80px 90px 36px",padding:mob?"11px 14px":"12px 18px",borderTop:"1px solid #f5ede0",alignItems:"center"}}><span style={{display:"flex",alignItems:"center",gap:7}}><span style={{fontSize:18}}>{p?.emoji||"🧋"}</span><div><div style={{fontSize:13,fontWeight:600}}>{p?.name||"(ลบแล้ว)"}</div>{mob&&<div style={{fontSize:11,color:c?.color||"#555",display:"flex",alignItems:"center",gap:3}}>{c?.icon} {c?.name}</div>}</div></span>{!mob&&<span style={{display:"flex",alignItems:"center",gap:5}}><span>{c?.icon||"?"}</span><span style={{fontSize:12,color:c?.color||"#555"}}>{c?.name||"(ลบแล้ว)"}</span></span>}<span style={{textAlign:"center",fontSize:14,fontWeight:700}}>{s2.qty}</span>{!mob&&<span style={{textAlign:"right",fontSize:12,color:"#7a6a5a"}}>฿{s2.qty?Math.round(s2.amount/s2.qty):0}</span>}<span style={{textAlign:"right",fontSize:14,fontWeight:700,color:"#2d7a4f"}}>฿{s2.amount.toLocaleString()}</span><button onClick={()=>setSales(prev=>prev.filter(x=>x.id!==s2.id))} style={{background:"none",border:"none",cursor:"pointer",color:"#d0b8a0",fontSize:15,textAlign:"center"}}>✕</button></div>;})}
+              {[...sl].reverse().map(s2=>{const p=pr.find(x=>x.id===s2.productId),c=ch.find(x=>x.id===s2.channelId);return <div key={s2.id} style={{display:"grid",gridTemplateColumns:mob?"1fr 70px 90px 36px":"1fr 1fr 70px 80px 90px 36px",padding:mob?"11px 14px":"12px 18px",borderTop:"1px solid #f5ede0",alignItems:"center"}}><span style={{display:"flex",alignItems:"center",gap:7}}><span style={{fontSize:18}}>{p?.emoji||"🧋"}</span><div><div style={{fontSize:13,fontWeight:600}}>{p?.name||"(ลบแล้ว)"}</div>{mob&&<div style={{fontSize:11,color:c?.color||"#555",display:"flex",alignItems:"center",gap:6}}><ChannelGlyph c={c} size={14}/> {c?.name}</div>}</div></span>{!mob&&<span style={{display:"flex",alignItems:"center",gap:6}}><ChannelGlyph c={c} size={16}/><span style={{fontSize:12,color:c?.color||"#555"}}>{c?.name||"(ลบแล้ว)"}</span></span>}<span style={{textAlign:"center",fontSize:14,fontWeight:700}}>{s2.qty}</span>{!mob&&<span style={{textAlign:"right",fontSize:12,color:"#7a6a5a"}}>฿{s2.qty?Math.round(s2.amount/s2.qty):0}</span>}<span style={{textAlign:"right",fontSize:14,fontWeight:700,color:"#2d7a4f"}}>฿{s2.amount.toLocaleString()}</span><button onClick={()=>setSales(prev=>prev.filter(x=>x.id!==s2.id))} style={{background:"none",border:"none",cursor:"pointer",color:"#d0b8a0",fontSize:15,textAlign:"center"}}>✕</button></div>;})}
               {sl.length===0&&<div style={{padding:32,textAlign:"center",color:"#b0a090"}}>ยังไม่มีรายการขาย</div>}
               {sl.length>0&&<div style={{display:"flex",justifyContent:"flex-end",padding:"10px 18px",borderTop:"2px solid #f0e0c8",background:"#fffbf5"}}><span style={{fontSize:14,fontWeight:700,color:"#2d7a4f"}}>รวม ฿{totalIncome.toLocaleString()}</span></div>}
             </div>
@@ -1113,7 +1118,7 @@ export default function App(){
                       </div>
                     : <div style={{fontSize:36,lineHeight:1}}>{p.emoji||"🧋"}</div>
                   }
-                </div><div style={{fontSize:14,fontWeight:700,marginBottom:4}}>{p.name}</div><div style={{display:"inline-block",background:(catColor[p.category]||"#c8a96e")+"22",color:catColor[p.category]||"#8b6f47",borderRadius:20,padding:"2px 8px",fontSize:10,marginBottom:10,border:`1px solid ${(catColor[p.category]||"#c8a96e")}44`}}>{p.category}</div><div style={{marginBottom:10}}>{ch.map(c=><div key={c.id} style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#7a6a5a",marginBottom:2}}><span style={{display:"flex",alignItems:"center",gap:4}}>{c.icon} {c.name}</span><span style={{fontWeight:600,color:c.color}}>฿{p.prices[c.id]||0}</span></div>)}</div><div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#7a6a5a",paddingTop:9,borderTop:"1px solid #f0e8db",marginBottom:12}}><span>ขาย <b style={{color:"#3a2e1e"}}>{sold}</b> แก้ว</span><span>฿<b style={{color:"#2d7a4f"}}>{rev.toLocaleString()}</b></span></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}><button onClick={()=>openSale(p)} style={{...pri,fontSize:11,padding:"7px 0"}}>🛒 ขาย</button><button onClick={()=>openEditProd(p)} style={{...sec,fontSize:11,padding:"7px 0"}}>✏️ แก้ไข</button><button onClick={()=>delProd(p.id)} style={{background:"#fdecea",color:"#c0392b",border:"1px solid #f0a8a3",borderRadius:9,padding:"7px 0",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑️ ลบ</button></div></div>;})}
+                </div><div style={{fontSize:14,fontWeight:700,marginBottom:4}}>{p.name}</div><div style={{display:"inline-block",background:(catColor[p.category]||"#c8a96e")+"22",color:catColor[p.category]||"#8b6f47",borderRadius:20,padding:"2px 8px",fontSize:10,marginBottom:10,border:`1px solid ${(catColor[p.category]||"#c8a96e")}44`}}>{p.category}</div><div style={{marginBottom:10}}>{ch.map(c=><div key={c.id} style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#7a6a5a",marginBottom:2}}><span style={{display:"flex",alignItems:"center",gap:6}}><ChannelGlyph c={c} size={14}/> {c.name}</span><span style={{fontWeight:600,color:c.color}}>฿{p.prices[c.id]||0}</span></div>)}</div><div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#7a6a5a",paddingTop:9,borderTop:"1px solid #f0e8db",marginBottom:12}}><span>ขาย <b style={{color:"#3a2e1e"}}>{sold}</b> แก้ว</span><span>฿<b style={{color:"#2d7a4f"}}>{rev.toLocaleString()}</b></span></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}><button onClick={()=>openSale(p)} style={{...pri,fontSize:11,padding:"7px 0"}}>🛒 ขาย</button><button onClick={()=>openEditProd(p)} style={{...sec,fontSize:11,padding:"7px 0"}}>✏️ แก้ไข</button><button onClick={()=>delProd(p.id)} style={{background:"#fdecea",color:"#c0392b",border:"1px solid #f0a8a3",borderRadius:9,padding:"7px 0",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑️ ลบ</button></div></div>;})}
             </div>
           </div>
         )}
@@ -1126,7 +1131,7 @@ export default function App(){
               <button onClick={openAddChan} style={{...pri,width:"auto",padding:mob?"8px 12px":"9px 18px",fontSize:mob?12:13}}>➕{mob?" เพิ่ม":" เพิ่มช่องทาง"}</button>
             </div>
             <div style={{display:"grid",gridTemplateColumns:mob?"1fr 1fr":"repeat(auto-fill,minmax(220px,1fr))",gap:16}}>
-              {ch.map(c=>{const rev=chanRevMap[c.id]||0,cnt=sl.filter(x=>x.channelId===c.id).reduce((a,b)=>a+b.qty,0),pct=totalIncome>0?((rev/totalIncome)*100).toFixed(1):0;return <div key={c.id} style={{background:"#fff",borderRadius:16,padding:22,border:`2px solid ${c.color}33`}}><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}><div style={{width:46,height:46,borderRadius:12,background:c.color+"22",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24}}>{c.icon}</div><div style={{fontSize:16,fontWeight:700}}>{c.name}</div></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}><div style={{background:"#f5f0e8",borderRadius:10,padding:"10px 12px"}}><div style={{fontSize:10,color:"#a09080",fontWeight:600}}>รายรับรวม</div><div style={{fontSize:18,fontWeight:700,color:c.color}}>฿{rev.toLocaleString()}</div></div><div style={{background:"#f5f0e8",borderRadius:10,padding:"10px 12px"}}><div style={{fontSize:10,color:"#a09080",fontWeight:600}}>แก้วที่ขาย</div><div style={{fontSize:18,fontWeight:700}}>{cnt}</div></div></div><div style={{marginBottom:14}}><div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#7a6a5a",marginBottom:4}}><span>สัดส่วน</span><span style={{fontWeight:700,color:c.color}}>{pct}%</span></div><div style={{height:6,background:"#f0e8db",borderRadius:4,overflow:"hidden"}}><div style={{height:"100%",width:`${pct}%`,background:c.color,borderRadius:4,opacity:.85}}/></div></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}><button onClick={()=>openEditChan(c)} style={{...sec,fontSize:12,padding:"7px 0"}}>✏️ แก้ไข</button><button onClick={()=>delChan(c.id)} style={{background:"#fdecea",color:"#c0392b",border:"1px solid #f0a8a3",borderRadius:9,padding:"7px 0",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>🗑️ ลบ</button></div></div>;})}
+              {ch.map(c=>{const rev=chanRevMap[c.id]||0,cnt=sl.filter(x=>x.channelId===c.id).reduce((a,b)=>a+b.qty,0),pct=totalIncome>0?((rev/totalIncome)*100).toFixed(1):0;return <div key={c.id} style={{background:"#fff",borderRadius:16,padding:22,border:`2px solid ${c.color}33`}}><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}><div style={{width:46,height:46,borderRadius:12,background:c.color+"22",display:"flex",alignItems:"center",justifyContent:"center"}}><ChannelGlyph c={c} size={26}/></div><div style={{fontSize:16,fontWeight:700}}>{c.name}</div></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}><div style={{background:"#f5f0e8",borderRadius:10,padding:"10px 12px"}}><div style={{fontSize:10,color:"#a09080",fontWeight:600}}>รายรับรวม</div><div style={{fontSize:18,fontWeight:700,color:c.color}}>฿{rev.toLocaleString()}</div></div><div style={{background:"#f5f0e8",borderRadius:10,padding:"10px 12px"}}><div style={{fontSize:10,color:"#a09080",fontWeight:600}}>แก้วที่ขาย</div><div style={{fontSize:18,fontWeight:700}}>{cnt}</div></div></div><div style={{marginBottom:14}}><div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#7a6a5a",marginBottom:4}}><span>สัดส่วน</span><span style={{fontWeight:700,color:c.color}}>{pct}%</span></div><div style={{height:6,background:"#f0e8db",borderRadius:4,overflow:"hidden"}}><div style={{height:"100%",width:`${pct}%`,background:c.color,borderRadius:4,opacity:.85}}/></div></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}><button onClick={()=>openEditChan(c)} style={{...sec,fontSize:12,padding:"7px 0"}}>✏️ แก้ไข</button><button onClick={()=>delChan(c.id)} style={{background:"#fdecea",color:"#c0392b",border:"1px solid #f0a8a3",borderRadius:9,padding:"7px 0",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>🗑️ ลบ</button></div></div>;})}
             </div>
           </div>
         )}
@@ -1215,29 +1220,53 @@ export default function App(){
         </div>
         <div style={{background:"#fef9f0",borderRadius:12,padding:14,border:"1px solid #e8d8c0",marginBottom:20}}>
           <div style={{fontSize:11,fontWeight:700,color:"#7a6a5a",marginBottom:12,letterSpacing:.8,textTransform:"uppercase"}}>💰 ราคาตามช่องทาง</div>
-          {ch.map(c=><div key={c.id} style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}><div style={{width:30,height:30,borderRadius:8,background:c.color+"22",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{c.icon}</div><span style={{flex:1,fontSize:13,fontWeight:600}}>{c.name}</span><span style={{fontSize:13,color:"#8b7060"}}>฿</span><input type="number" value={pForm.prices[c.id]||""} onChange={e=>setPForm({...pForm,prices:{...pForm.prices,[c.id]:e.target.value}})} placeholder="0" style={{...inp,width:80,textAlign:"right",padding:"7px 10px"}}/></div>)}
+          {ch.map(c=><div key={c.id} style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}><div style={{width:30,height:30,borderRadius:8,background:c.color+"22",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}><ChannelGlyph c={c} size={18}/></div><span style={{flex:1,fontSize:13,fontWeight:600}}>{c.name}</span><span style={{fontSize:13,color:"#8b7060"}}>฿</span><input type="number" value={pForm.prices[c.id]||""} onChange={e=>setPForm({...pForm,prices:{...pForm.prices,[c.id]:e.target.value}})} placeholder="0" style={{...inp,width:80,textAlign:"right",padding:"7px 10px"}}/></div>)}
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><button onClick={close} style={sec}>ยกเลิก</button><button onClick={saveProd} style={pri}>💾 บันทึก</button></div>
       </Modal>}
 
       {modal==="chan"&&<Modal title={editing?"แก้ไขช่องทาง":"เพิ่มช่องทางใหม่"} onClose={close} width={360}>
+        <div style={{marginBottom:16}}>
+          <label style={lbl}>โลโก้ (ไม่บังคับ)</label>
+          <div style={{display:"flex",alignItems:"center",gap:14}}>
+            <div style={{width:70,height:70,borderRadius:14,border:"2px dashed #d5c5b0",overflow:"hidden",flexShrink:0,background:"#fef9f0",display:"flex",alignItems:"center",justifyContent:"center"}}>
+              {cForm.logo
+                ? <img src={cForm.logo} alt="" style={{width:"100%",height:"100%",objectFit:"contain"}}/>
+                : <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,background:cForm.color+"22"}}>{cForm.icon||"🏪"}</div>
+              }
+            </div>
+            <div style={{flex:1}}>
+              <label style={{display:"inline-block",background:"linear-gradient(135deg,#8b6f47,#5a3820)",color:"#f5e6d0",borderRadius:9,padding:"9px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+                🖼️ เลือกรูป
+                <input type="file" accept="image/*" style={{display:"none"}} onChange={async e=>{
+                  const file=e.target.files?.[0];
+                  if(!file) return;
+                  const compressed=await compressImage(file, 220, 220, 0.8);
+                  setCForm(f=>({...f,logo:compressed}));
+                }}/>
+              </label>
+              {cForm.logo&&<button onClick={()=>setCForm(f=>({...f,logo:null}))} style={{marginLeft:8,background:"#fdecea",color:"#c0392b",border:"none",borderRadius:8,padding:"9px 12px",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>🗑️ ลบรูป</button>}
+              <div style={{fontSize:11,color:"#a09080",marginTop:6}}>JPG/PNG ขนาดไม่เกิน 5MB</div>
+            </div>
+          </div>
+        </div>
         <div style={{marginBottom:14}}><label style={lbl}>ชื่อช่องทาง</label><input value={cForm.name} onChange={e=>setCForm({...cForm,name:e.target.value})} placeholder="เช่น TikTok Shop" style={inp}/></div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
-          <div><label style={lbl}>ไอคอน (Emoji)</label><input value={cForm.icon} onChange={e=>setCForm({...cForm,icon:e.target.value})} placeholder="🏪" style={inp}/></div>
+          <div><label style={lbl}>ไอคอน (Emoji)</label><input value={cForm.icon} onChange={e=>setCForm({...cForm,icon:e.target.value})} placeholder="🏪" style={{...inp,opacity:cForm.logo?0.4:1}}/></div>
           <div><label style={lbl}>สีช่องทาง</label><div style={{display:"flex",gap:8,alignItems:"center"}}><input type="color" value={cForm.color} onChange={e=>setCForm({...cForm,color:e.target.value})} style={{width:40,height:36,borderRadius:8,border:"1px solid #d5c5b0",cursor:"pointer",padding:2}}/><input value={cForm.color} onChange={e=>setCForm({...cForm,color:e.target.value})} style={{...inp,flex:1}}/></div></div>
         </div>
-        <div style={{background:"#fef9f0",borderRadius:10,padding:12,marginBottom:20,border:"1px solid #e8d8c0",display:"flex",alignItems:"center",gap:10}}><span style={{fontSize:26}}>{cForm.icon}</span><span style={{fontWeight:700,color:cForm.color,fontSize:15}}>{cForm.name||"ชื่อช่องทาง"}</span><span style={{fontSize:11,color:"#a09080",marginLeft:"auto"}}>Preview</span></div>
+        <div style={{background:"#fef9f0",borderRadius:10,padding:12,marginBottom:20,border:"1px solid #e8d8c0",display:"flex",alignItems:"center",gap:10}}><ChannelGlyph c={cForm} size={26}/><span style={{fontWeight:700,color:cForm.color,fontSize:15}}>{cForm.name||"ชื่อช่องทาง"}</span><span style={{fontSize:11,color:"#a09080",marginLeft:"auto"}}>Preview</span></div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><button onClick={close} style={sec}>ยกเลิก</button><button onClick={saveChan} style={pri}>💾 บันทึก</button></div>
       </Modal>}
 
       {modal==="sale"&&<Modal title="บันทึกการขาย" onClose={close} width={390}>
         <div style={{marginBottom:14}}><label style={lbl}>เครื่องดื่ม</label><select value={sForm.productId} onChange={e=>setSForm({...sForm,productId:parseInt(e.target.value)})} style={inp}>{pr.map(p=><option key={p.id} value={p.id}>{p.emoji} {p.name}</option>)}</select></div>
-        <div style={{marginBottom:14}}><label style={lbl}>ช่องทางการขาย</label><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>{ch.map(c=><button key={c.id} onClick={()=>setSForm({...sForm,channelId:c.id})} style={{padding:"9px 12px",borderRadius:10,border:sForm.channelId===c.id?`2px solid ${c.color}`:"1px solid #d5c5b0",background:sForm.channelId===c.id?c.color+"18":"#fff",cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:8,fontSize:13,fontWeight:sForm.channelId===c.id?700:400,color:sForm.channelId===c.id?c.color:"#3a2e1e"}}><span style={{fontSize:18}}>{c.icon}</span>{c.name}</button>)}</div></div>
+        <div style={{marginBottom:14}}><label style={lbl}>ช่องทางการขาย</label><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>{ch.map(c=><button key={c.id} onClick={()=>setSForm({...sForm,channelId:c.id})} style={{padding:"9px 12px",borderRadius:10,border:sForm.channelId===c.id?`2px solid ${c.color}`:"1px solid #d5c5b0",background:sForm.channelId===c.id?c.color+"18":"#fff",cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:8,fontSize:13,fontWeight:sForm.channelId===c.id?700:400,color:sForm.channelId===c.id?c.color:"#3a2e1e"}}><ChannelGlyph c={c} size={18}/>{c.name}</button>)}</div></div>
         {saleProd&&sForm.channelId&&<div style={{background:"#fef9f0",borderRadius:10,padding:12,marginBottom:14,border:"1px solid #e8d8c0",display:"flex",alignItems:"center",gap:12}}>
           {saleProd.image
             ? <div style={{width:44,height:44,borderRadius:10,overflow:"hidden",flexShrink:0}}><img src={saleProd.image} alt={saleProd.name} style={{width:"100%",height:"100%",objectFit:"cover"}}/></div>
             : <span style={{fontSize:28}}>{saleProd.emoji}</span>
-          }<div><div style={{fontSize:13,fontWeight:700}}>{saleProd.name}</div><div style={{fontSize:12,color:"#8b7060"}}>ราคา {ch.find(c=>c.id===sForm.channelId)?.icon} {ch.find(c=>c.id===sForm.channelId)?.name}: <b style={{color:ch.find(c=>c.id===sForm.channelId)?.color,fontSize:14}}>฿{saleUnit}</b></div></div></div>}
+          }<div><div style={{fontSize:13,fontWeight:700}}>{saleProd.name}</div><div style={{fontSize:12,color:"#8b7060"}}>ราคา <ChannelGlyph c={ch.find(c=>c.id===sForm.channelId)} size={14}/> {ch.find(c=>c.id===sForm.channelId)?.name}: <b style={{color:ch.find(c=>c.id===sForm.channelId)?.color,fontSize:14}}>฿{saleUnit}</b></div></div></div>}
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:18}}>
           <div><label style={lbl}>จำนวน (แก้ว)</label><input type="number" min="1" value={sForm.qty} onChange={e=>setSForm({...sForm,qty:e.target.value})} style={{...inp,fontSize:20,fontWeight:700,textAlign:"center"}}/></div>
           <div><label style={lbl}>วันที่</label><input type="date" value={sForm.date} onChange={e=>setSForm({...sForm,date:e.target.value})} style={inp}/></div>
