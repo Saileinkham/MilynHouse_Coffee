@@ -84,6 +84,7 @@ function useCloudData(key, defaultValue, cloudEnabled) {
     if (db && cloudEnabled) {
       const dataRef = dbRef(db, key);
       const metaRef = dbRef(db, `milyn_meta/seeded/${key}`);
+      const updatedAtRef = dbRef(db, `milyn_meta/updatedAt/${key}`);
       const emptyValue = Array.isArray(defaultValue) ? [] : defaultValue;
       let unsub = null;
       let cancelled = false;
@@ -92,13 +93,36 @@ function useCloudData(key, defaultValue, cloudEnabled) {
         try {
           const pendingRaw = localStorage.getItem(pendingKey);
           if (pendingRaw) {
-            const pendingVal = JSON.parse(pendingRaw);
-            await set(dataRef, pendingVal);
+            const parsed = JSON.parse(pendingRaw);
+            const pendingVal =
+              parsed && typeof parsed === "object" && parsed !== null && "value" in parsed
+                ? parsed.value
+                : parsed;
+            const pendingTs =
+              parsed && typeof parsed === "object" && parsed !== null && "ts" in parsed
+                ? parsed.ts
+                : null;
+
+            let cloudTs = 0;
+            let hasCloud = false;
+            try {
+              const [tSnap, vSnap] = await Promise.all([get(updatedAtRef), get(dataRef)]);
+              cloudTs = tSnap.exists() ? (tSnap.val() || 0) : 0;
+              hasCloud = vSnap.exists() && vSnap.val() != null;
+            } catch {}
+
+            const canApply =
+              !hasCloud || (typeof pendingTs === "number" && (!cloudTs || pendingTs >= cloudTs));
+
+            if (canApply) {
+              await set(dataRef, pendingVal);
+              await set(updatedAtRef, typeof pendingTs === "number" ? pendingTs : Date.now());
+              localStorage.setItem(key, JSON.stringify(pendingVal));
+              setDataRaw(pendingVal);
+              set(metaRef, true).catch(() => {});
+              hasEverSeededRef.current = true;
+            }
             localStorage.removeItem(pendingKey);
-            localStorage.setItem(key, JSON.stringify(pendingVal));
-            setDataRaw(pendingVal);
-            set(metaRef, true).catch(() => {});
-            hasEverSeededRef.current = true;
           }
         } catch {}
 
@@ -124,6 +148,7 @@ function useCloudData(key, defaultValue, cloudEnabled) {
                 runTransaction(dataRef, (current) => current ?? defaultValue)
                   .then(() => set(metaRef, true))
                   .then(() => { hasEverSeededRef.current = true; })
+                  .then(() => set(updatedAtRef, Date.now()))
                   .catch(() => {});
                 try { localStorage.setItem(key, JSON.stringify(defaultValue)); } catch {}
               } else {
@@ -179,14 +204,16 @@ function useCloudData(key, defaultValue, cloudEnabled) {
       try {
         try { localStorage.setItem(key, JSON.stringify(nextValue)); } catch {}
         if (db && cloudEnabled) {
+          const updatedAtRef = dbRef(db, `milyn_meta/updatedAt/${key}`);
           try {
             await set(dbRef(db, key), nextValue);
+            await set(updatedAtRef, Date.now());
             try { localStorage.removeItem(`milyn_pending/${key}`); } catch {}
           } catch {
-            try { localStorage.setItem(`milyn_pending/${key}`, JSON.stringify(nextValue)); } catch {}
+            try { localStorage.setItem(`milyn_pending/${key}`, JSON.stringify({ ts: Date.now(), value: nextValue })); } catch {}
           }
         } else if (db && !cloudEnabled) {
-          try { localStorage.setItem(`milyn_pending/${key}`, JSON.stringify(nextValue)); } catch {}
+          try { localStorage.setItem(`milyn_pending/${key}`, JSON.stringify({ ts: Date.now(), value: nextValue })); } catch {}
         }
       } catch {}
       finally { setSyncing(false); }
