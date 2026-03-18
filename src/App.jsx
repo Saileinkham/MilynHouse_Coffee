@@ -54,17 +54,24 @@ const sec = { background:"#fff", color:"#6b4c2a", border:"1px solid #d5c5b0", bo
 
 // ── Cloud Storage Hook (Claude Artifact) ──────────────────────────────────────
 function useCloudData(key, defaultValue) {
-  const [data, setDataRaw] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setDataRaw] = useState(() => {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : defaultValue;
+    } catch {
+      return defaultValue;
+    }
+  });
+  const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const hasEverSeededRef = useRef(false);
   const authOkRef = useRef(true);
 
   useEffect(() => {
     let done = false;
+    const pendingKey = `milyn_pending/${key}`;
     const fallbackTimer = setTimeout(() => {
       if (done) return;
-      setDataRaw((prev) => prev ?? defaultValue);
       setLoading(false);
     }, 4000);
 
@@ -79,17 +86,24 @@ function useCloudData(key, defaultValue) {
         const authOk = await authReady;
         authOkRef.current = authOk;
         if (!authOk) {
-          try {
-            const raw = localStorage.getItem(key);
-            setDataRaw(raw ? JSON.parse(raw) : defaultValue);
-          } catch {
-            setDataRaw(defaultValue);
-          }
           done = true;
           clearTimeout(fallbackTimer);
           setLoading(false);
           return;
         }
+
+        try {
+          const pendingRaw = localStorage.getItem(pendingKey);
+          if (pendingRaw) {
+            const pendingVal = JSON.parse(pendingRaw);
+            await runTransaction(dataRef, () => pendingVal);
+            localStorage.removeItem(pendingKey);
+            localStorage.setItem(key, JSON.stringify(pendingVal));
+            setDataRaw(pendingVal);
+            set(metaRef, true).catch(() => {});
+            hasEverSeededRef.current = true;
+          }
+        } catch {}
 
         let shouldSeed = true;
         try {
@@ -114,11 +128,14 @@ function useCloudData(key, defaultValue) {
                   .then(() => set(metaRef, true))
                   .then(() => { hasEverSeededRef.current = true; })
                   .catch(() => {});
+                try { localStorage.setItem(key, JSON.stringify(defaultValue)); } catch {}
               } else {
                 setDataRaw(emptyValue);
+                try { localStorage.setItem(key, JSON.stringify(emptyValue)); } catch {}
               }
             } else {
               setDataRaw(val);
+              try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
             }
 
             setLoading(false);
@@ -127,6 +144,7 @@ function useCloudData(key, defaultValue) {
             done = true;
             clearTimeout(fallbackTimer);
             setDataRaw(shouldSeed ? defaultValue : emptyValue);
+            try { localStorage.setItem(key, JSON.stringify(shouldSeed ? defaultValue : emptyValue)); } catch {}
             setLoading(false);
           },
         );
@@ -140,12 +158,6 @@ function useCloudData(key, defaultValue) {
       };
     }
 
-    try {
-      const raw = localStorage.getItem(key);
-      setDataRaw(raw ? JSON.parse(raw) : defaultValue);
-    } catch {
-      setDataRaw(defaultValue);
-    }
     done = true;
     clearTimeout(fallbackTimer);
     setLoading(false);
@@ -168,11 +180,12 @@ function useCloudData(key, defaultValue) {
       });
 
       try {
+        try { localStorage.setItem(key, JSON.stringify(nextValue)); } catch {}
         if (db) {
           const authOk = await authReady;
           authOkRef.current = authOk;
           if (!authOk) {
-            localStorage.setItem(key, JSON.stringify(nextValue));
+            try { localStorage.setItem(`milyn_pending/${key}`, JSON.stringify(nextValue)); } catch {}
             return;
           }
           await runTransaction(dbRef(db, key), (current) => {
@@ -182,7 +195,6 @@ function useCloudData(key, defaultValue) {
             return typeof updater === "function" ? updater(base) : updater;
           });
         } else {
-          localStorage.setItem(key, JSON.stringify(nextValue));
         }
       } catch {}
       finally { setSyncing(false); }
