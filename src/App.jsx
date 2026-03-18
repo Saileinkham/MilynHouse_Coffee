@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import * as XLSX from "xlsx";
-import { onValue, ref as dbRef, set } from "firebase/database";
+import { onValue, ref as dbRef, runTransaction, set } from "firebase/database";
 import { db } from "./firebase.js";
 
 // ── Initial Data ──────────────────────────────────────────────────────────────
@@ -76,7 +76,7 @@ function useCloudData(key, defaultValue) {
           const val = snap.val();
           if (val == null) {
             setDataRaw(defaultValue);
-            set(r, defaultValue).catch(() => {});
+            runTransaction(r, (current) => current ?? defaultValue).catch(() => {});
           } else {
             setDataRaw(val);
           }
@@ -124,8 +124,14 @@ function useCloudData(key, defaultValue) {
       });
 
       try {
-        if (db) await set(dbRef(db, key), nextValue);
-        else localStorage.setItem(key, JSON.stringify(nextValue));
+        if (db) {
+          await runTransaction(dbRef(db, key), (current) => {
+            const base = current ?? defaultValue;
+            return typeof updater === "function" ? updater(base) : updater;
+          });
+        } else {
+          localStorage.setItem(key, JSON.stringify(nextValue));
+        }
       } catch {}
       finally { setSyncing(false); }
     },
