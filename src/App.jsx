@@ -116,6 +116,12 @@ function useCloudData(key, defaultValue, cloudEnabled) {
           (snap) => {
             done = true;
             clearTimeout(fallbackTimer);
+            try {
+              if (localStorage.getItem(pendingKey)) {
+                setLoading(false);
+                return;
+              }
+            } catch {}
             const val = snap.val();
 
             if (val == null) {
@@ -140,6 +146,12 @@ function useCloudData(key, defaultValue, cloudEnabled) {
           () => {
             done = true;
             clearTimeout(fallbackTimer);
+            try {
+              if (localStorage.getItem(pendingKey)) {
+                setLoading(false);
+                return;
+              }
+            } catch {}
             setDataRaw(shouldSeed ? defaultValue : emptyValue);
             try { localStorage.setItem(key, JSON.stringify(shouldSeed ? defaultValue : emptyValue)); } catch {}
             setLoading(false);
@@ -179,12 +191,16 @@ function useCloudData(key, defaultValue, cloudEnabled) {
       try {
         try { localStorage.setItem(key, JSON.stringify(nextValue)); } catch {}
         if (db && cloudEnabled) {
-          await runTransaction(dbRef(db, key), (current) => {
-            const base =
-              current ??
-              (hasEverSeededRef.current && Array.isArray(defaultValue) ? [] : defaultValue);
-            return typeof updater === "function" ? updater(base) : updater;
-          });
+          try {
+            await runTransaction(dbRef(db, key), (current) => {
+              const base =
+                current ??
+                (hasEverSeededRef.current && Array.isArray(defaultValue) ? [] : defaultValue);
+              return typeof updater === "function" ? updater(base) : updater;
+            });
+          } catch {
+            try { localStorage.setItem(`milyn_pending/${key}`, JSON.stringify(nextValue)); } catch {}
+          }
         } else if (db && !cloudEnabled) {
           try { localStorage.setItem(`milyn_pending/${key}`, JSON.stringify(nextValue)); } catch {}
         }
