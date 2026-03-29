@@ -174,13 +174,15 @@ function useCloudData(key, defaultValue, cloudEnabled) {
       try {
         try { localStorage.setItem(key, JSON.stringify(nextValue)); } catch {}
         if (db && cloudEnabled) {
+          // Save pending BEFORE the write so logout mid-flight doesn't lose data
+          try { localStorage.setItem(pendingKey, JSON.stringify({ ts: Date.now(), value: nextValue })); } catch {}
           await set(dbRef(db, key), nextValue);
           try { localStorage.removeItem(pendingKey); } catch {}
         } else if (db) {
           try { localStorage.setItem(pendingKey, JSON.stringify({ ts: Date.now(), value: nextValue })); } catch {}
         }
       } catch {
-        try { localStorage.setItem(`milyn_pending/${key}`, JSON.stringify({ ts: Date.now(), value: nextValue })); } catch {}
+        try { localStorage.setItem(pendingKey, JSON.stringify({ ts: Date.now(), value: nextValue })); } catch {}
       } finally {
         setSyncing(false);
       }
