@@ -108,11 +108,12 @@ function useCloudData(key, defaultValue, cloudEnabled) {
     const nextValue = typeof updater === 'function' ? updater(base) : updater;
     latestData.current = nextValue;
     setDataRaw(nextValue);
-    if (!db || !cloudEnabled) return;
+    if (!db || !cloudEnabled) { console.warn('[DB] cloudEnabled=false, skip write', key); return; }
     setSyncing(true);
     try {
       await set(dbRef(db, key), nextValue);
-    } catch { /* onValue will restore Firebase's actual value on failure */ }
+      console.log('[DB] write ok', key);
+    } catch(e) { console.error('[DB] write FAILED', key, e); }
     finally { setSyncing(false); }
   }, [key, defaultValue, cloudEnabled]);
 
