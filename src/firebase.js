@@ -4,7 +4,14 @@
 //  ดูวิธีใน README.md
 // ─────────────────────────────────────────────────────
 import { getApp, getApps, initializeApp } from 'firebase/app'
-import { getAuth, onAuthStateChanged, signInAnonymously } from 'firebase/auth'
+import {
+  createUserWithEmailAndPassword,
+  getAuth,
+  onAuthStateChanged,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
+  signOut,
+} from 'firebase/auth'
 import { getDatabase } from 'firebase/database'
 
 const firebaseConfig = {
@@ -21,45 +28,24 @@ const hasAllConfig = Object.values(firebaseConfig).every(
   (v) => typeof v === 'string' && v.trim().length > 0,
 )
 
-let resolveAuthReady
-export const authReady = new Promise((resolve) => {
-  resolveAuthReady = resolve
-})
+function getOrInitApp() {
+  return getApps().length ? getApp() : initializeApp(firebaseConfig)
+}
 
 export const auth = (() => {
-  if (!hasAllConfig) {
-    resolveAuthReady(false)
-    return null
-  }
-  try {
-    const app = getApps().length ? getApp() : initializeApp(firebaseConfig)
-    const a = getAuth(app)
-    let resolved = false
-    const safeResolve = (v) => {
-      if (resolved) return
-      resolved = true
-      resolveAuthReady(v)
-    }
-    onAuthStateChanged(
-      a,
-      (user) => safeResolve(Boolean(user)),
-      () => safeResolve(false),
-    )
-    signInAnonymously(a).catch(() => {})
-    setTimeout(() => safeResolve(false), 4000)
-    return a
-  } catch {
-    resolveAuthReady(false)
-    return null
-  }
+  if (!hasAllConfig) return null
+  try { return getAuth(getOrInitApp()) } catch { return null }
 })()
 
 export const db = (() => {
   if (!hasAllConfig) return null
-  try {
-    const app = getApps().length ? getApp() : initializeApp(firebaseConfig)
-    return getDatabase(app)
-  } catch {
-    return null
-  }
+  try { return getDatabase(getOrInitApp()) } catch { return null }
 })()
+
+export {
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
+  signOut,
+}

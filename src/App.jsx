@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import * as XLSX from "xlsx";
-import { get, onValue, ref as dbRef, runTransaction, set } from "firebase/database";
-import { auth, authReady, db } from "./firebase.js";
+import { onValue, ref as dbRef, set } from "firebase/database";
+import { auth, createUserWithEmailAndPassword, db, onAuthStateChanged, sendPasswordResetEmail, signInWithEmailAndPassword, signOut } from "./firebase.js";
 
 // ── Initial Data ──────────────────────────────────────────────────────────────
 const DEFAULT_CHANNELS = [
@@ -59,164 +59,131 @@ const lbl = { display:"block", fontSize:11, fontWeight:700, color:"#7a6a5a", mar
 const pri = { background:"linear-gradient(135deg,#8b6f47,#5a3820)", color:"#f5e6d0", border:"none", borderRadius:9, padding:"10px 0", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit", width:"100%" };
 const sec = { background:"#fff", color:"#6b4c2a", border:"1px solid #d5c5b0", borderRadius:9, padding:"10px 0", fontSize:13, cursor:"pointer", fontFamily:"inherit", width:"100%" };
 
-// ── Cloud Storage Hook (Claude Artifact) ──────────────────────────────────────
+// ── Cloud Storage Hook ─────────────────────────────────────────────────────────
 function useCloudData(key, defaultValue, cloudEnabled) {
   const [data, setDataRaw] = useState(() => {
     try {
       const raw = localStorage.getItem(key);
-      return raw ? JSON.parse(raw) : defaultValue;
+      const parsed = raw ? JSON.parse(raw) : defaultValue;
+      // Firebase RTDB stores arrays as integer-keyed objects — normalize back to array if needed
+      if (Array.isArray(defaultValue) && parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const keys = Object.keys(parsed);
+        const isFirebaseArray = keys.length > 0 && keys.every(k => /^\d+$/.test(k));
+        return isFirebaseArray
+          ? keys.sort((a, b) => Number(a) - Number(b)).map(k => parsed[k])
+          : defaultValue; // corrupt/wrong-format — fall back to default
+      }
+      return parsed;
     } catch {
       return defaultValue;
     }
   });
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const hasEverSeededRef = useRef(false);
 
   useEffect(() => {
-    let done = false;
-    const pendingKey = `milyn_pending/${key}`;
-    const fallbackTimer = setTimeout(() => {
-      if (done) return;
+    if (!db || !cloudEnabled) {
       setLoading(false);
-    }, 4000);
-
-    if (db && cloudEnabled) {
-      const dataRef = dbRef(db, key);
-      const metaRef = dbRef(db, `milyn_meta/seeded/${key}`);
-      const updatedAtRef = dbRef(db, `milyn_meta/updatedAt/${key}`);
-      const emptyValue = Array.isArray(defaultValue) ? [] : defaultValue;
-      let unsub = null;
-      let cancelled = false;
-
-      (async () => {
-        try {
-          const pendingRaw = localStorage.getItem(pendingKey);
-          if (pendingRaw) {
-            const parsed = JSON.parse(pendingRaw);
-            const pendingVal =
-              parsed && typeof parsed === "object" && parsed !== null && "value" in parsed
-                ? parsed.value
-                : parsed;
-            const pendingTs =
-              parsed && typeof parsed === "object" && parsed !== null && "ts" in parsed
-                ? parsed.ts
-                : null;
-
-            let cloudTs = 0;
-            let hasCloud = false;
-            try {
-              const [tSnap, vSnap] = await Promise.all([get(updatedAtRef), get(dataRef)]);
-              cloudTs = tSnap.exists() ? (tSnap.val() || 0) : 0;
-              hasCloud = vSnap.exists() && vSnap.val() != null;
-            } catch {}
-
-            const canApply =
-              !hasCloud || (typeof pendingTs === "number" && (!cloudTs || pendingTs >= cloudTs));
-
-            if (canApply) {
-              await set(dataRef, pendingVal);
-              await set(updatedAtRef, typeof pendingTs === "number" ? pendingTs : Date.now());
-              localStorage.setItem(key, JSON.stringify(pendingVal));
-              setDataRaw(pendingVal);
-              set(metaRef, true).catch(() => {});
-              hasEverSeededRef.current = true;
-            }
-            localStorage.removeItem(pendingKey);
-          }
-        } catch {}
-
-        let shouldSeed = true;
-        try {
-          const metaSnap = await get(metaRef);
-          hasEverSeededRef.current = metaSnap.exists();
-          shouldSeed = !metaSnap.exists();
-        } catch {}
-
-        if (cancelled) return;
-
-        unsub = onValue(
-          dataRef,
-          (snap) => {
-            done = true;
-            clearTimeout(fallbackTimer);
-            const val = snap.val();
-
-            if (val == null) {
-              if (shouldSeed) {
-                setDataRaw(defaultValue);
-                runTransaction(dataRef, (current) => current ?? defaultValue)
-                  .then(() => set(metaRef, true))
-                  .then(() => { hasEverSeededRef.current = true; })
-                  .then(() => set(updatedAtRef, Date.now()))
-                  .catch(() => {});
-                try { localStorage.setItem(key, JSON.stringify(defaultValue)); } catch {}
-              } else {
-                setDataRaw(emptyValue);
-                try { localStorage.setItem(key, JSON.stringify(emptyValue)); } catch {}
-              }
-            } else {
-              setDataRaw(val);
-              try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
-            }
-
-            setLoading(false);
-          },
-          () => {
-            done = true;
-            clearTimeout(fallbackTimer);
-            setDataRaw(shouldSeed ? defaultValue : emptyValue);
-            try { localStorage.setItem(key, JSON.stringify(shouldSeed ? defaultValue : emptyValue)); } catch {}
-            setLoading(false);
-          },
-        );
-      })();
-
-      return () => {
-        cancelled = true;
-        done = true;
-        clearTimeout(fallbackTimer);
-        if (unsub) unsub();
-      };
+      return;
     }
 
-    done = true;
-    clearTimeout(fallbackTimer);
-    setLoading(false);
+    setLoading(true);
+    const dataRef = dbRef(db, key);
+    const pendingKey = `milyn_pending/${key}`;
+    let unsub = null;
+    let cancelled = false;
+
+    const fallbackTimer = setTimeout(() => {
+      if (!cancelled) setLoading(false);
+    }, 5000);
+
+    (async () => {
+      // Flush pending offline writes first
+      try {
+        const pendingRaw = localStorage.getItem(pendingKey);
+        if (pendingRaw) {
+          const parsed = JSON.parse(pendingRaw);
+          const pendingVal = parsed?.value ?? parsed;
+          const pendingTs = parsed?.ts ?? 0;
+          if (Date.now() - pendingTs < 86_400_000) {
+            await set(dataRef, pendingVal);
+            if (!cancelled) {
+              setDataRaw(pendingVal);
+              try { localStorage.setItem(key, JSON.stringify(pendingVal)); } catch {}
+            }
+          }
+          localStorage.removeItem(pendingKey);
+        }
+      } catch {}
+
+      if (cancelled) return;
+
+      unsub = onValue(
+        dataRef,
+        (snap) => {
+          if (cancelled) return;
+          clearTimeout(fallbackTimer);
+          let val = snap.val();
+          // Firebase RTDB stores arrays as integer-keyed objects — normalize back to array if needed
+          if (val !== null && typeof val === 'object' && !Array.isArray(val) && Array.isArray(defaultValue)) {
+            const keys = Object.keys(val);
+            const isFirebaseArray = keys.length > 0 && keys.every(k => /^\d+$/.test(k));
+            val = isFirebaseArray ? keys.sort((a, b) => Number(a) - Number(b)).map(k => val[k]) : defaultValue;
+          }
+          if (val == null) {
+            // ยังไม่มีข้อมูลใน Firebase — seed จาก localStorage หรือ default
+            let seedVal = defaultValue;
+            try {
+              const localRaw = localStorage.getItem(key);
+              if (localRaw) seedVal = JSON.parse(localRaw);
+            } catch {}
+            set(dataRef, seedVal).catch(() => {});
+          } else {
+            setDataRaw(val);
+            try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
+          }
+          setLoading(false);
+        },
+        () => {
+          if (cancelled) return;
+          clearTimeout(fallbackTimer);
+          setLoading(false);
+        }
+      );
+    })().catch(() => {
+      if (!cancelled) { clearTimeout(fallbackTimer); setLoading(false); }
+    });
 
     return () => {
-      done = true;
+      cancelled = true;
       clearTimeout(fallbackTimer);
+      if (unsub) unsub();
     };
-  }, [key, defaultValue, cloudEnabled]);
+  }, [key, cloudEnabled]);
 
   const setData = useCallback(
     async (updater) => {
       setSyncing(true);
+      const pendingKey = `milyn_pending/${key}`;
       let nextValue;
-
       setDataRaw((prev) => {
         const base = prev ?? defaultValue;
         nextValue = typeof updater === "function" ? updater(base) : updater;
         return nextValue;
       });
-
       try {
         try { localStorage.setItem(key, JSON.stringify(nextValue)); } catch {}
         if (db && cloudEnabled) {
-          const updatedAtRef = dbRef(db, `milyn_meta/updatedAt/${key}`);
-          try {
-            await set(dbRef(db, key), nextValue);
-            await set(updatedAtRef, Date.now());
-            try { localStorage.removeItem(`milyn_pending/${key}`); } catch {}
-          } catch {
-            try { localStorage.setItem(`milyn_pending/${key}`, JSON.stringify({ ts: Date.now(), value: nextValue })); } catch {}
-          }
-        } else if (db && !cloudEnabled) {
-          try { localStorage.setItem(`milyn_pending/${key}`, JSON.stringify({ ts: Date.now(), value: nextValue })); } catch {}
+          await set(dbRef(db, key), nextValue);
+          try { localStorage.removeItem(pendingKey); } catch {}
+        } else if (db) {
+          try { localStorage.setItem(pendingKey, JSON.stringify({ ts: Date.now(), value: nextValue })); } catch {}
         }
-      } catch {}
-      finally { setSyncing(false); }
+      } catch {
+        try { localStorage.setItem(`milyn_pending/${key}`, JSON.stringify({ ts: Date.now(), value: nextValue })); } catch {}
+      } finally {
+        setSyncing(false);
+      }
     },
     [key, defaultValue, cloudEnabled],
   );
@@ -336,50 +303,32 @@ function compressImage(file, maxW=400, maxH=400, quality=0.75) {
 }
 
 // ── Components ────────────────────────────────────────────────────────────────
-function SyncBadge({syncing,compact=false,locked=false}){
+function SyncBadge({syncing,compact=false,localOnly=false,loggedIn=false}){
   const mode = db ? "firebase" : "local";
-  const [online, setOnline] = useState(mode !== "firebase");
-  const [authOk, setAuthOk] = useState(mode !== "firebase");
+  const [online, setOnline] = useState(false);
   useEffect(() => {
-    if (!db) {
-      setOnline(true);
-      setAuthOk(true);
-      return;
-    }
-    let cancelled = false;
-    authReady.then((ok) => {
-      if (cancelled) return;
-      setAuthOk(Boolean(ok));
-    });
+    if (!db) { setOnline(true); return; }
     const unsub = onValue(
       dbRef(db, ".info/connected"),
       (snap) => setOnline(Boolean(snap.val())),
       () => setOnline(false),
     );
-    return () => {
-      cancelled = true;
-      unsub();
-    };
-  }, [mode]);
+    return () => unsub();
+  }, []);
 
-  const color =
-    syncing
-      ? "#c8a96e"
-      : mode === "firebase"
-        ? (authOk && online && !locked ? "#6dbe8d" : "#e0a45b")
-        : "#a09080";
+  const active = mode === "firebase" && loggedIn && online && !localOnly;
+  const color = syncing ? "#c8a96e" : active ? "#6dbe8d" : mode === "firebase" ? "#e0a45b" : "#a09080";
+  const label = mode !== "firebase"
+    ? "Local • ไม่ซิงค์ข้ามเครื่อง"
+    : syncing ? "กำลังซิงค์..."
+    : localOnly ? "Local Only"
+    : !loggedIn ? "Firebase • ยังไม่ล็อกอิน"
+    : online ? "Firebase • Online"
+    : "Firebase • Offline";
 
   return <div style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color}}>
     <div style={{width:7,height:7,borderRadius:"50%",background:color,animation:syncing?"pulse 1s infinite":"none",flexShrink:0}}/>
-    {!compact && (
-      <span>
-        {mode === "firebase"
-          ? (syncing
-              ? "กำลังซิงค์..."
-              : (authOk && online && !locked ? "Firebase • Online" : (locked ? "Firebase • Locked" : "Firebase • Offline")))
-          : "Local • ไม่ซิงค์ข้ามเครื่อง"}
-      </span>
-    )}
+    {!compact && <span>{label}</span>}
   </div>;
 }
 
@@ -425,9 +374,100 @@ function Modal({title,onClose,children,width=400}){
 
 function LoadingScreen(){
   return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"linear-gradient(135deg,#faf6f0,#f5e6d0)",fontFamily:"'Sarabun',sans-serif"}}>
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&family=Playfair+Display:wght@700&display=swap" rel="stylesheet"/>
     <div style={{fontSize:52,marginBottom:16,animation:"bounce .8s infinite alternate"}}>🧋</div>
     <div style={{fontFamily:"'Playfair Display',serif",fontSize:22,color:"#3a2e1e",marginBottom:8}}>Milyn House</div>
     <div style={{fontSize:13,color:"#a09080"}}>กำลังโหลดข้อมูล ☁️...</div>
+  </div>;
+}
+
+function LoginScreen({onSkip}){
+  const [mode,setMode]=useState("login");
+  const [email,setEmail]=useState("");
+  const [password,setPassword]=useState("");
+  const [err,setErr]=useState("");
+  const [busy,setBusy]=useState(false);
+  const [resetSent,setResetSent]=useState(false);
+
+  const ERR_MAP={
+    "auth/user-not-found":"ไม่พบบัญชีนี้",
+    "auth/wrong-password":"รหัสผ่านไม่ถูกต้อง",
+    "auth/invalid-credential":"อีเมลหรือรหัสผ่านไม่ถูกต้อง",
+    "auth/email-already-in-use":"อีเมลนี้มีบัญชีอยู่แล้ว",
+    "auth/weak-password":"รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร",
+    "auth/invalid-email":"รูปแบบอีเมลไม่ถูกต้อง",
+    "auth/too-many-requests":"ลองใหม่ภายหลัง (ลองมากเกินไป)",
+    "auth/network-request-failed":"ไม่มีการเชื่อมต่ออินเทอร์เน็ต",
+  };
+
+  async function submit(){
+    if(!email.trim()||!password){setErr("กรุณากรอกอีเมลและรหัสผ่าน");return;}
+    setBusy(true);setErr("");
+    try{
+      if(mode==="login") await signInWithEmailAndPassword(auth,email.trim(),password);
+      else await createUserWithEmailAndPassword(auth,email.trim(),password);
+    }catch(e){
+      setErr(ERR_MAP[e.code]||"เกิดข้อผิดพลาด: "+e.code);
+    }finally{setBusy(false);}
+  }
+
+  async function resetPassword(){
+    if(!email.trim()){setErr("กรอกอีเมลก่อน แล้วกด 'ลืมรหัสผ่าน'");return;}
+    setBusy(true);setErr("");
+    try{
+      await sendPasswordResetEmail(auth,email.trim());
+      setResetSent(true);
+    }catch(e){
+      setErr(ERR_MAP[e.code]||"ส่งอีเมลไม่ได้: "+e.code);
+    }finally{setBusy(false);}
+  }
+
+  return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(135deg,#faf6f0,#f5e6d0)",fontFamily:"'Sarabun',sans-serif",padding:20}}>
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&family=Playfair+Display:wght@700&display=swap" rel="stylesheet"/>
+    <style>{`@keyframes bounce{from{transform:translateY(0)}to{transform:translateY(-10px)}}`}</style>
+    <div style={{background:"#fff",borderRadius:24,padding:36,width:"100%",maxWidth:380,boxShadow:"0 16px 60px rgba(90,40,10,.18)",border:"1px solid #e8d8c0"}}>
+      <div style={{textAlign:"center",marginBottom:28}}>
+        <div style={{fontSize:48,marginBottom:10,animation:"bounce .9s infinite alternate"}}>🧋</div>
+        <div style={{fontFamily:"'Playfair Display',serif",fontSize:24,color:"#3a2e1e",marginBottom:4}}>Milyn House</div>
+        <div style={{fontSize:13,color:"#a09080"}}>{mode==="login"?"เข้าสู่ระบบ":"สร้างบัญชีใหม่"}</div>
+      </div>
+
+      {resetSent
+        ? <div style={{background:"#e8f7ef",borderRadius:12,padding:16,textAlign:"center",marginBottom:16}}>
+            <div style={{fontSize:22,marginBottom:6}}>✅</div>
+            <div style={{fontSize:13,color:"#2d7a4f",fontWeight:600}}>ส่งลิงก์รีเซ็ตไปที่อีเมลแล้ว</div>
+            <div style={{fontSize:12,color:"#5a8a70",marginTop:4}}>กรุณาตรวจสอบอีเมลของคุณ</div>
+            <button onClick={()=>{setResetSent(false);setMode("login");}} style={{marginTop:12,background:"none",border:"none",color:"#6b4c2a",fontSize:13,cursor:"pointer",fontWeight:700,fontFamily:"inherit"}}>กลับไปเข้าสู่ระบบ</button>
+          </div>
+        : <>
+            <div style={{marginBottom:14}}>
+              <label style={lbl}>อีเมล</label>
+              <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="email@example.com" style={inp} onKeyDown={e=>e.key==="Enter"&&submit()}/>
+            </div>
+            <div style={{marginBottom:mode==="login"?8:20}}>
+              <label style={lbl}>รหัสผ่าน</label>
+              <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="••••••" style={inp} onKeyDown={e=>e.key==="Enter"&&submit()}/>
+            </div>
+            {mode==="login"&&<div style={{textAlign:"right",marginBottom:16}}>
+              <button onClick={resetPassword} disabled={busy} style={{background:"none",border:"none",color:"#8b6f47",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>ลืมรหัสผ่าน?</button>
+            </div>}
+            {err&&<div style={{fontSize:12,color:"#c0392b",marginBottom:14,background:"#fdecea",borderRadius:8,padding:"8px 12px"}}>{err}</div>}
+            <button onClick={submit} disabled={busy} style={{...pri,marginBottom:12,opacity:busy?.7:1}}>
+              {busy?"กำลังดำเนินการ...":(mode==="login"?"🔐 เข้าสู่ระบบ":"✨ สร้างบัญชี")}
+            </button>
+            <div style={{textAlign:"center",fontSize:13,color:"#8b7060",marginBottom:16}}>
+              {mode==="login"
+                ?<>ยังไม่มีบัญชี? <button onClick={()=>{setMode("register");setErr("");}} style={{background:"none",border:"none",color:"#6b4c2a",fontWeight:700,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>สมัครสมาชิก</button></>
+                :<>มีบัญชีอยู่แล้ว? <button onClick={()=>{setMode("login");setErr("");}} style={{background:"none",border:"none",color:"#6b4c2a",fontWeight:700,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>เข้าสู่ระบบ</button></>
+              }
+            </div>
+          </>
+      }
+
+      {onSkip&&<div style={{borderTop:"1px solid #f0e8db",paddingTop:14,textAlign:"center"}}>
+        <button onClick={onSkip} style={{background:"none",border:"none",color:"#a09080",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>ใช้แบบ Local (ไม่ซิงค์ข้ามเครื่อง)</button>
+      </div>}
+    </div>
   </div>;
 }
 
@@ -437,54 +477,24 @@ export default function App(){
   const [modal,setModal]=useState(null);
   const [editing,setEditing]=useState(null);
 
-  const [cloudAllowed, setCloudAllowed] = useState(false);
-  const [codeOpen, setCodeOpen] = useState(false);
-  const [shopCode, setShopCode] = useState("");
-  const [codeErr, setCodeErr] = useState("");
-  const [codeBusy, setCodeBusy] = useState(false);
+  // ── Firebase Auth ────────────────────────────────────────────────────────────
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(Boolean(auth));
+  const [localOnly, setLocalOnly] = useState(false);
   const [catOpen, setCatOpen] = useState(false);
   const [catEditing, setCatEditing] = useState(null);
   const [catForm, setCatForm] = useState({ name:"", color:"#c8a96e" });
 
   useEffect(() => {
-    let cancelled = false;
-    if (!db) return () => {};
-
-    (async () => {
-      const ok = await authReady;
-      if (cancelled) return;
-      if (!ok) {
-        setCloudAllowed(false);
-        return;
-      }
-      const uid = auth?.currentUser?.uid;
-      if (!uid) {
-        setCloudAllowed(false);
-        return;
-      }
-      try {
-        const snap = await get(dbRef(db, `milyn_admins/${uid}`));
-        if (cancelled) return;
-        if (snap.exists() && typeof snap.val() === "string" && snap.val().trim()) {
-          setCloudAllowed(true);
-          setCodeOpen(false);
-        } else {
-          setCloudAllowed(false);
-          setCodeOpen(true);
-        }
-      } catch {
-        if (cancelled) return;
-        setCloudAllowed(false);
-        setCodeOpen(true);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
+    if (!auth) { setAuthLoading(false); return; }
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setAuthLoading(false);
+    });
+    return () => unsub();
   }, []);
 
-  const cloudEnabled = Boolean(db) && cloudAllowed;
+  const cloudEnabled = Boolean(db) && Boolean(user) && !localOnly;
 
   const [channels,setChannels,loadingCh,syncingCh]=useCloudData("milyn_channels",DEFAULT_CHANNELS,cloudEnabled);
   const [products,setProducts,loadingPr,syncingPr]=useCloudData("milyn_products",DEFAULT_PRODUCTS,cloudEnabled);
@@ -509,34 +519,6 @@ export default function App(){
   const [selYear,setSelYear]=useState(now.getFullYear());
   const [selMonth,setSelMonth]=useState(now.getMonth()); // 0-11 or "all"
   const [selChannel,setSelChannel]=useState("all"); // channel filter
-
-  async function submitShopCode() {
-    if (!db) return;
-    const c = shopCode.trim();
-    if (!c) {
-      setCodeErr("กรอกรหัสร้าน");
-      return;
-    }
-    setCodeBusy(true);
-    setCodeErr("");
-    try {
-      const ok = await authReady;
-      if (!ok) throw new Error("auth");
-      const uid = auth?.currentUser?.uid;
-      if (!uid) throw new Error("uid");
-      await set(dbRef(db, `milyn_admins/${uid}`), c);
-      setCloudAllowed(true);
-      setCodeOpen(false);
-    } catch {
-      setCloudAllowed(false);
-      setCodeErr("รหัสไม่ถูกต้อง หรือยังไม่ได้ตั้งค่า Rules/InviteCode");
-    } finally {
-      setCodeBusy(false);
-    }
-  }
-
-  const close=()=>{setModal(null);setEditing(null);};
-  if(loading) return <LoadingScreen/>;
 
   const ch=channels||[], pr=products||[], sl=sales||[], ex=expenses||[], cats=categories||[];
   const catColor = Object.fromEntries(cats.map(c=>[c.name,c.color]));
@@ -851,6 +833,13 @@ export default function App(){
     setSForm(prev => ({...prev, unitPrice: String(u)}));
   }, [sForm.productId, sForm.channelId]);
 
+  // ── Conditional returns (AFTER all hooks) ─────────────────────────────────
+  if (authLoading) return <LoadingScreen />;
+  if (db && !user && !localOnly) return <LoginScreen onSkip={() => setLocalOnly(true)} />;
+  if (loading) return <LoadingScreen />;
+
+  const close=()=>{setModal(null);setEditing(null);};
+
   function saveSale(){
     if(!sForm.productId||!sForm.channelId||!sForm.qty)return;
     const qty=parseInt(sForm.qty)||0;
@@ -868,22 +857,6 @@ export default function App(){
       <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&family=Playfair+Display:wght@700&display=swap" rel="stylesheet"/>
       <style>{`@keyframes bounce{from{transform:translateY(0)}to{transform:translateY(-10px)}}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}* {-webkit-tap-highlight-color:transparent}`}</style>
 
-      {codeOpen && (
-        <Modal title="ใส่รหัสร้าน" onClose={()=>setCodeOpen(false)} width={420}>
-          <div style={{display:"grid",gap:12}}>
-            <div>
-              <label style={lbl}>รหัสร้าน</label>
-              <input type="password" value={shopCode} onChange={e=>setShopCode(e.target.value)} style={inp} placeholder="กรอกรหัสร้านเพื่อใช้งาน Firebase"/>
-            </div>
-            {codeErr && <div style={{fontSize:12,color:"#c0392b"}}>{codeErr}</div>}
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-              <button onClick={()=>setCodeOpen(false)} style={sec}>ใช้แบบ Local</button>
-              <button onClick={submitShopCode} disabled={codeBusy} style={{...pri,opacity:codeBusy?.7:1}}>ยืนยัน</button>
-            </div>
-          </div>
-        </Modal>
-      )}
-
       {/* ── Header ── */}
       <header style={{background:"linear-gradient(135deg,#2e1e0e,#6b4c2a)",padding:"0 16px",boxShadow:"0 4px 24px rgba(30,10,0,.35)",position:"sticky",top:0,zIndex:50}}>
         <div style={{maxWidth:containerMax,margin:"0 auto",display:"flex",alignItems:"center",justifyContent:"space-between",height:mob?52:60}}>
@@ -895,7 +868,10 @@ export default function App(){
             </div>
           </div>
           {mob
-            ? <SyncBadge syncing={syncing} compact locked={Boolean(db) && !cloudAllowed}/>
+            ? <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <SyncBadge syncing={syncing} compact loggedIn={Boolean(user)} localOnly={localOnly}/>
+                {user&&<button onClick={()=>signOut(auth)} style={{background:"none",border:"1px solid rgba(200,169,110,.3)",color:"#c0aa88",borderRadius:7,padding:"4px 10px",fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>ออก</button>}
+              </div>
             : <nav style={{display:"flex",gap:2,alignItems:"center"}}>
                 {TABS.map(([k,ic,lb])=>(
                   <button key={k} onClick={()=>setTab(k)} style={{background:tab===k?"rgba(200,169,110,.22)":"transparent",border:tab===k?"1px solid rgba(200,169,110,.45)":"1px solid transparent",color:tab===k?"#f5e6d0":"#c0aa88",padding:"5px 11px",borderRadius:8,cursor:"pointer",fontSize:11,display:"flex",alignItems:"center",gap:4}}>
@@ -903,7 +879,14 @@ export default function App(){
                   </button>
                 ))}
                 <div style={{width:1,height:24,background:"rgba(255,255,255,.15)",margin:"0 6px"}}/>
-                <SyncBadge syncing={syncing} locked={Boolean(db) && !cloudAllowed}/>
+                <SyncBadge syncing={syncing} loggedIn={Boolean(user)} localOnly={localOnly}/>
+                {user&&<>
+                  <div style={{width:1,height:24,background:"rgba(255,255,255,.15)",margin:"0 6px"}}/>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:11,color:"#c0aa88",maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{user.email}</span>
+                    <button onClick={()=>signOut(auth)} style={{background:"none",border:"1px solid rgba(200,169,110,.35)",color:"#c8a96e",borderRadius:7,padding:"4px 10px",fontSize:11,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>ออกจากระบบ</button>
+                  </div>
+                </>}
               </nav>
           }
         </div>
