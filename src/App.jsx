@@ -89,9 +89,8 @@ function useCloudData(key, defaultValue, cloudEnabled) {
         const raw = snap.val();
         const val = normalizeFirebaseVal(raw, defaultValue);
 if (val === null) {
-          set(firebaseRef, defaultValue).catch(() => {});
-          latestData.current = defaultValue;
-          setDataRaw(defaultValue);
+          latestData.current = Array.isArray(defaultValue) ? [] : defaultValue;
+          setDataRaw(Array.isArray(defaultValue) ? [] : defaultValue);
         } else {
           latestData.current = val;
           setDataRaw(val);
