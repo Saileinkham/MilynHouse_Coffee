@@ -59,136 +59,61 @@ const lbl = { display:"block", fontSize:11, fontWeight:700, color:"#7a6a5a", mar
 const pri = { background:"linear-gradient(135deg,#8b6f47,#5a3820)", color:"#f5e6d0", border:"none", borderRadius:9, padding:"10px 0", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit", width:"100%" };
 const sec = { background:"#fff", color:"#6b4c2a", border:"1px solid #d5c5b0", borderRadius:9, padding:"10px 0", fontSize:13, cursor:"pointer", fontFamily:"inherit", width:"100%" };
 
-// ── Cloud Storage Hook ─────────────────────────────────────────────────────────
+// ── Cloud Storage Hook (Firebase-primary, no localStorage) ────────────────────
+function normalizeFirebaseVal(val, defaultValue) {
+  if (val === null || val === undefined) return null;
+  if (Array.isArray(defaultValue) && val && typeof val === 'object' && !Array.isArray(val)) {
+    const keys = Object.keys(val);
+    if (keys.length > 0 && keys.every(k => /^\d+$/.test(k)))
+      return keys.sort((a, b) => +a - +b).map(k => val[k]);
+    return defaultValue;
+  }
+  return val;
+}
+
 function useCloudData(key, defaultValue, cloudEnabled) {
-  const [data, setDataRaw] = useState(() => {
-    try {
-      const raw = localStorage.getItem(key);
-      const parsed = raw ? JSON.parse(raw) : defaultValue;
-      // Firebase RTDB stores arrays as integer-keyed objects — normalize back to array if needed
-      if (Array.isArray(defaultValue) && parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        const keys = Object.keys(parsed);
-        const isFirebaseArray = keys.length > 0 && keys.every(k => /^\d+$/.test(k));
-        return isFirebaseArray
-          ? keys.sort((a, b) => Number(a) - Number(b)).map(k => parsed[k])
-          : defaultValue; // corrupt/wrong-format — fall back to default
-      }
-      return parsed;
-    } catch {
-      return defaultValue;
-    }
-  });
+  const [data, setDataRaw] = useState(defaultValue);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
-    if (!db || !cloudEnabled) {
-      setLoading(false);
-      return;
-    }
-
+    if (!db || !cloudEnabled) { setLoading(false); return; }
     setLoading(true);
     const dataRef = dbRef(db, key);
-    const pendingKey = `milyn_pending/${key}`;
-    let unsub = null;
     let cancelled = false;
-
-    const fallbackTimer = setTimeout(() => {
-      if (!cancelled) setLoading(false);
-    }, 5000);
-
-    (async () => {
-      // Flush pending offline writes first
-      try {
-        const pendingRaw = localStorage.getItem(pendingKey);
-        if (pendingRaw) {
-          const parsed = JSON.parse(pendingRaw);
-          const pendingVal = parsed?.value ?? parsed;
-          const pendingTs = parsed?.ts ?? 0;
-          if (Date.now() - pendingTs < 86_400_000) {
-            await set(dataRef, pendingVal);
-            if (!cancelled) {
-              setDataRaw(pendingVal);
-              try { localStorage.setItem(key, JSON.stringify(pendingVal)); } catch {}
-            }
-          }
-          localStorage.removeItem(pendingKey);
+    const unsub = onValue(
+      dataRef,
+      (snap) => {
+        if (cancelled) return;
+        const raw = snap.val();
+        const val = normalizeFirebaseVal(raw, defaultValue);
+        if (val === null) {
+          set(dataRef, defaultValue).catch(() => {});
+          setDataRaw(defaultValue);
+        } else {
+          setDataRaw(val);
         }
-      } catch {}
-
-      if (cancelled) return;
-
-      unsub = onValue(
-        dataRef,
-        (snap) => {
-          if (cancelled) return;
-          clearTimeout(fallbackTimer);
-          let val = snap.val();
-          // Firebase RTDB stores arrays as integer-keyed objects — normalize back to array if needed
-          if (val !== null && typeof val === 'object' && !Array.isArray(val) && Array.isArray(defaultValue)) {
-            const keys = Object.keys(val);
-            const isFirebaseArray = keys.length > 0 && keys.every(k => /^\d+$/.test(k));
-            val = isFirebaseArray ? keys.sort((a, b) => Number(a) - Number(b)).map(k => val[k]) : defaultValue;
-          }
-          if (val == null) {
-            // ยังไม่มีข้อมูลใน Firebase — seed จาก localStorage หรือ default
-            let seedVal = defaultValue;
-            try {
-              const localRaw = localStorage.getItem(key);
-              if (localRaw) seedVal = JSON.parse(localRaw);
-            } catch {}
-            set(dataRef, seedVal).catch(() => {});
-          } else {
-            setDataRaw(val);
-            try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
-          }
-          setLoading(false);
-        },
-        () => {
-          if (cancelled) return;
-          clearTimeout(fallbackTimer);
-          setLoading(false);
-        }
-      );
-    })().catch(() => {
-      if (!cancelled) { clearTimeout(fallbackTimer); setLoading(false); }
-    });
-
-    return () => {
-      cancelled = true;
-      clearTimeout(fallbackTimer);
-      if (unsub) unsub();
-    };
+        setLoading(false);
+      },
+      () => { if (!cancelled) setLoading(false); }
+    );
+    return () => { cancelled = true; unsub(); };
   }, [key, cloudEnabled]);
 
-  const setData = useCallback(
-    async (updater) => {
-      setSyncing(true);
-      const pendingKey = `milyn_pending/${key}`;
-      let nextValue;
-      setDataRaw((prev) => {
-        const base = prev ?? defaultValue;
-        nextValue = typeof updater === "function" ? updater(base) : updater;
-        return nextValue;
-      });
-      try {
-        try { localStorage.setItem(key, JSON.stringify(nextValue)); } catch {}
-        if (db && cloudEnabled) {
-          // Save pending BEFORE the write so logout mid-flight doesn't lose data
-          try { localStorage.setItem(pendingKey, JSON.stringify({ ts: Date.now(), value: nextValue })); } catch {}
-          await set(dbRef(db, key), nextValue);
-          try { localStorage.removeItem(pendingKey); } catch {}
-        } else if (db) {
-          try { localStorage.setItem(pendingKey, JSON.stringify({ ts: Date.now(), value: nextValue })); } catch {}
-        }
-      } catch {
-        try { localStorage.setItem(pendingKey, JSON.stringify({ ts: Date.now(), value: nextValue })); } catch {}
-      } finally {
-        setSyncing(false);
-      }
-    },
-    [key, defaultValue, cloudEnabled],
-  );
+  const setData = useCallback(async (updater) => {
+    let nextValue;
+    setDataRaw(prev => {
+      const base = prev ?? defaultValue;
+      nextValue = typeof updater === 'function' ? updater(base) : updater;
+      return nextValue;
+    });
+    if (!db || !cloudEnabled) return;
+    setSyncing(true);
+    try {
+      await set(dbRef(db, key), nextValue);
+    } catch { /* onValue will restore Firebase's actual value on failure */ }
+    finally { setSyncing(false); }
+  }, [key, defaultValue, cloudEnabled]);
 
   return [data, setData, loading, syncing];
 }
