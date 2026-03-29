@@ -88,8 +88,7 @@ function useCloudData(key, defaultValue, cloudEnabled) {
         if (cancelled) return;
         const raw = snap.val();
         const val = normalizeFirebaseVal(raw, defaultValue);
-        console.log('[DB] onValue', key, 'raw=', raw, 'normalized=', val);
-        if (val === null) {
+if (val === null) {
           set(firebaseRef, defaultValue).catch(() => {});
           latestData.current = defaultValue;
           setDataRaw(defaultValue);
@@ -109,12 +108,11 @@ function useCloudData(key, defaultValue, cloudEnabled) {
     const nextValue = typeof updater === 'function' ? updater(base) : updater;
     latestData.current = nextValue;
     setDataRaw(nextValue);
-    if (!db || !cloudEnabled) { console.warn('[DB] cloudEnabled=false, skip write', key); return; }
+    if (!db || !cloudEnabled) return;
     setSyncing(true);
     try {
       await set(dbRef(db, key), nextValue);
-      console.log('[DB] write ok', key);
-    } catch(e) { console.error('[DB] write FAILED', key, e); }
+    } catch { /* onValue will restore Firebase's actual value on failure */ }
     finally { setSyncing(false); }
   }, [key, defaultValue, cloudEnabled]);
 
