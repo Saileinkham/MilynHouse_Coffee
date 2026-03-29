@@ -75,22 +75,25 @@ function useCloudData(key, defaultValue, cloudEnabled) {
   const [data, setDataRaw] = useState(defaultValue);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const latestData = useRef(defaultValue);
 
   useEffect(() => {
     if (!db || !cloudEnabled) { setLoading(false); return; }
     setLoading(true);
-    const dataRef = dbRef(db, key);
+    const firebaseRef = dbRef(db, key);
     let cancelled = false;
     const unsub = onValue(
-      dataRef,
+      firebaseRef,
       (snap) => {
         if (cancelled) return;
         const raw = snap.val();
         const val = normalizeFirebaseVal(raw, defaultValue);
         if (val === null) {
-          set(dataRef, defaultValue).catch(() => {});
+          set(firebaseRef, defaultValue).catch(() => {});
+          latestData.current = defaultValue;
           setDataRaw(defaultValue);
         } else {
+          latestData.current = val;
           setDataRaw(val);
         }
         setLoading(false);
@@ -101,12 +104,10 @@ function useCloudData(key, defaultValue, cloudEnabled) {
   }, [key, cloudEnabled]);
 
   const setData = useCallback(async (updater) => {
-    let nextValue;
-    setDataRaw(prev => {
-      const base = prev ?? defaultValue;
-      nextValue = typeof updater === 'function' ? updater(base) : updater;
-      return nextValue;
-    });
+    const base = latestData.current ?? defaultValue;
+    const nextValue = typeof updater === 'function' ? updater(base) : updater;
+    latestData.current = nextValue;
+    setDataRaw(nextValue);
     if (!db || !cloudEnabled) return;
     setSyncing(true);
     try {
