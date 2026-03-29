@@ -376,7 +376,6 @@ function Modal({title,onClose,children,width=400}){
 
 function LoadingScreen(){
   return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"linear-gradient(135deg,#faf6f0,#f5e6d0)",fontFamily:"'Sarabun',sans-serif"}}>
-    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&family=Playfair+Display:wght@700&display=swap" rel="stylesheet"/>
     <div style={{fontSize:52,marginBottom:16,animation:"bounce .8s infinite alternate"}}>🧋</div>
     <div style={{fontFamily:"'Playfair Display',serif",fontSize:22,color:"#3a2e1e",marginBottom:8}}>Milyn House</div>
     <div style={{fontSize:13,color:"#a09080"}}>กำลังโหลดข้อมูล ☁️...</div>
@@ -425,8 +424,6 @@ function LoginScreen({onSkip}){
   }
 
   return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(135deg,#faf6f0,#f5e6d0)",fontFamily:"'Sarabun',sans-serif",padding:20}}>
-    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&family=Playfair+Display:wght@700&display=swap" rel="stylesheet"/>
-    <style>{`@keyframes bounce{from{transform:translateY(0)}to{transform:translateY(-10px)}}`}</style>
     <div style={{background:"#fff",borderRadius:24,padding:36,width:"100%",maxWidth:380,boxShadow:"0 16px 60px rgba(90,40,10,.18)",border:"1px solid #e8d8c0"}}>
       <div style={{textAlign:"center",marginBottom:28}}>
         <div style={{fontSize:48,marginBottom:10,animation:"bounce .9s infinite alternate"}}>🧋</div>
@@ -575,11 +572,13 @@ export default function App(){
 
   // Filter by month/year + channel
   const mSales=sl.filter(s=>{
+    if(!s?.date) return false;
     const inPeriod = isAllMonths ? s.date.startsWith(String(selYear)) : s.date.startsWith(ym);
     const inChan=selChannel==="all"||s.channelId===selChannel;
     return inPeriod&&inChan;
   });
   const mExpenses=ex.filter(e=>{
+    if(!e?.date) return false;
     return isAllMonths ? e.date.startsWith(String(selYear)) : e.date.startsWith(ym);
   });
 
@@ -856,8 +855,6 @@ export default function App(){
 
   return (
     <div style={{fontFamily:"'Sarabun','Noto Sans Thai',sans-serif",background:"#faf6f0",minHeight:"100vh",color:"#3a2e1e"}}>
-      <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&family=Playfair+Display:wght@700&display=swap" rel="stylesheet"/>
-      <style>{`@keyframes bounce{from{transform:translateY(0)}to{transform:translateY(-10px)}}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}* {-webkit-tap-highlight-color:transparent}`}</style>
 
       {/* ── Header ── */}
       <header style={{background:"linear-gradient(135deg,#2e1e0e,#6b4c2a)",padding:"0 16px",boxShadow:"0 4px 24px rgba(30,10,0,.35)",position:"sticky",top:0,zIndex:50}}>
